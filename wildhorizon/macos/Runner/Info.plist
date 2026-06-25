@@ -31,6 +31,8 @@
 	<key>NSPrincipalClass</key>
 	<string>NSApplication</string>
 	<key>NSLocationWhenInUseUsageDescription</key>
-	<string>WildHorizon uses your location to detect when you reach the start and finish of a trail so it can save completed rides automatically.</string>
+	<string>WildHorizon uses your location to record rides and detect when you reach the start and finish of a trail.</string>
+	<key>NSLocationUsageDescription</key>
+	<string>WildHorizon uses your location to record rides and detect when you reach the start and finish of a trail.</string>
 </dict>
 </plist>

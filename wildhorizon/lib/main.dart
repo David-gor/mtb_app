@@ -111,6 +111,29 @@ class _HomeScreenState extends State<HomeScreen> {
   final Distance _distance = const Distance();
   Timer? _mapViewSaveTimer;
 
+  // Live ride recording state.
+  bool _isRecording = false;
+  final List<LatLng> _recordTrack = [];
+  DateTime? _recordStartedAt;
+  double _recordDistanceMeters = 0;
+  Duration _recordElapsed = Duration.zero;
+  StreamSubscription<Position>? _recordSubscription;
+  Timer? _recordTickTimer;
+
+  // Elevation tracking. GPS altitude is noisy, so we keep a smoothed value
+  // and only count deltas above a small noise floor.
+  double? _recordSmoothedAltitude;
+  double _recordElevationGain = 0;
+
+  // Speed tracking. Prefer the GPS-reported `position.speed` (m/s); fall back
+  // to step-distance / dt computed from the previous accepted sample.
+  double _recordCurrentSpeedMps = 0;
+  double _recordMaxSpeedMps = 0;
+  DateTime? _recordLastSampleAt;
+
+  /// Saved ride whose recorded track is currently highlighted on the map.
+  RideEntry? _focusedRecordedRide;
+
   @override
   void initState() {
     super.initState();
@@ -122,6 +145,8 @@ class _HomeScreenState extends State<HomeScreen> {
     _mapViewSaveTimer?.cancel();
     unawaited(_persistMapView());
     _trailCompletionSubscription?.cancel();
+    _recordSubscription?.cancel();
+    _recordTickTimer?.cancel();
     _riderNameController.dispose();
     _riderBikeController.dispose();
     super.dispose();
@@ -180,6 +205,50 @@ class _HomeScreenState extends State<HomeScreen> {
     _mapViewSaveTimer?.cancel();
     _mapViewSaveTimer = Timer(const Duration(milliseconds: 900), () {
       unawaited(_persistMapView());
+    });
+  }
+
+  void _focusRecordedRideOnMap(RideEntry ride) {
+    if (ride.track.length < 2) {
+      return;
+    }
+    setState(() {
+      _navIndex = 2;
+      _focusedRecordedRide = ride;
+    });
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) {
+        return;
+      }
+      try {
+        final bounds = LatLngBounds.fromPoints(ride.track);
+        _mapController.fitCamera(
+          CameraFit.bounds(
+            bounds: bounds,
+            padding: const EdgeInsets.all(40),
+            maxZoom: 17,
+          ),
+        );
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (!mounted) {
+            return;
+          }
+          final cam = _mapController.camera;
+          setState(() {
+            _mapCenter = cam.center;
+            _mapZoom = cam.zoom;
+          });
+          _schedulePersistMapView();
+        });
+      } catch (_) {
+        final mid = ride.track[ride.track.length ~/ 2];
+        _mapController.move(mid, 14);
+        setState(() {
+          _mapCenter = mid;
+          _mapZoom = 14;
+        });
+        _schedulePersistMapView();
+      }
     });
   }
 
@@ -609,6 +678,442 @@ class _HomeScreenState extends State<HomeScreen> {
       _trailCompletionStartAt = null;
       _trailCompletionSaved = false;
     });
+  }
+
+  Future<void> _startRecording() async {
+    if (_isRecording) {
+      return;
+    }
+
+    try {
+      final servicesOn = await Geolocator.isLocationServiceEnabled();
+      if (!servicesOn) {
+        if (!mounted) {
+          return;
+        }
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Turn on location services to record a ride.'),
+          ),
+        );
+        return;
+      }
+
+      var permission = await Geolocator.checkPermission();
+      if (permission == LocationPermission.denied) {
+        permission = await Geolocator.requestPermission();
+      }
+      if (permission == LocationPermission.denied ||
+          permission == LocationPermission.deniedForever) {
+        if (!mounted) {
+          return;
+        }
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Location permission is needed to record a ride.'),
+          ),
+        );
+        return;
+      }
+    } catch (e) {
+      if (!mounted) {
+        return;
+      }
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Could not access location: $e')),
+      );
+      return;
+    }
+
+    setState(() {
+      _isRecording = true;
+      _recordTrack.clear();
+      _recordDistanceMeters = 0;
+      _recordStartedAt = DateTime.now();
+      _recordElapsed = Duration.zero;
+      _recordSmoothedAltitude = null;
+      _recordElevationGain = 0;
+      _recordCurrentSpeedMps = 0;
+      _recordMaxSpeedMps = 0;
+      _recordLastSampleAt = null;
+    });
+
+    const settings = LocationSettings(
+      accuracy: LocationAccuracy.bestForNavigation,
+      distanceFilter: 5,
+    );
+    _recordSubscription = Geolocator.getPositionStream(
+      locationSettings: settings,
+    ).listen(_handleRecordPosition, onError: (_) {});
+    _recordTickTimer = Timer.periodic(const Duration(seconds: 1), (_) {
+      final start = _recordStartedAt;
+      if (!mounted || start == null) {
+        return;
+      }
+      setState(() {
+        _recordElapsed = DateTime.now().difference(start);
+      });
+    });
+  }
+
+  void _handleRecordPosition(Position position) {
+    if (!_isRecording || !mounted) {
+      return;
+    }
+    final p = LatLng(position.latitude, position.longitude);
+    double stepMeters = 0;
+    if (_recordTrack.isNotEmpty) {
+      final last = _recordTrack.last;
+      stepMeters = _distance.as(LengthUnit.Meter, last, p);
+      // Filter obvious GPS jitter (sub-3m steps) and teleports (>150m jumps).
+      if (stepMeters < 3 || stepMeters > 150) {
+        return;
+      }
+      _recordDistanceMeters += stepMeters;
+    }
+    _updateRecordedElevation(position);
+    _updateRecordedSpeed(position, stepMeters);
+    setState(() {
+      _recordTrack.add(p);
+    });
+  }
+
+  /// Updates current and max speed. Prefers `position.speed` (GPS-reported,
+  /// m/s) when valid; otherwise falls back to distance / elapsed-since-last.
+  void _updateRecordedSpeed(Position position, double stepMeters) {
+    double speedMps = 0;
+    if (position.speed.isFinite && position.speed >= 0) {
+      speedMps = position.speed;
+    } else {
+      final last = _recordLastSampleAt;
+      final now = position.timestamp;
+      if (last != null) {
+        final dt = now.difference(last).inMilliseconds / 1000.0;
+        if (dt > 0 && stepMeters > 0) {
+          speedMps = stepMeters / dt;
+        }
+      }
+    }
+    // Ignore obviously-bad values (e.g. > 150 km/h on a bike app).
+    if (speedMps > 42) {
+      speedMps = _recordCurrentSpeedMps;
+    }
+    _recordCurrentSpeedMps = speedMps;
+    if (speedMps > _recordMaxSpeedMps) {
+      _recordMaxSpeedMps = speedMps;
+    }
+    _recordLastSampleAt = position.timestamp;
+  }
+
+  double get _recordAvgSpeedMps {
+    final secs = _recordElapsed.inSeconds;
+    if (secs < 1) {
+      return 0;
+    }
+    return _recordDistanceMeters / secs;
+  }
+
+  String _formatSpeedKmh(double mps) {
+    final kmh = mps * 3.6;
+    if (kmh < 0.1) {
+      return '0';
+    }
+    return kmh.toStringAsFixed(1);
+  }
+
+  String _recordingChipFooterText() {
+    final parts = <String>[_formatDistanceMeters(_recordDistanceMeters)];
+    if (_recordElevationGain >= 1) {
+      parts.add(_formatElevationGainMeters(_recordElevationGain));
+    }
+    final avg = _recordAvgSpeedMps;
+    if (avg > 0.1) {
+      parts.add('avg ${_formatSpeedKmh(avg)}');
+    }
+    if (_recordMaxSpeedMps > 0.1) {
+      parts.add('max ${_formatSpeedKmh(_recordMaxSpeedMps)}');
+    }
+    return parts.join(' · ');
+  }
+
+  /// Smooths GPS altitude (which is noisy) and accumulates positive deltas
+  /// as elevation gain. Skips samples whose `altitudeAccuracy` is worse than
+  /// ~25 m or where altitude is non-finite (e.g. unsupported platform).
+  void _updateRecordedElevation(Position position) {
+    final alt = position.altitude;
+    if (!alt.isFinite) {
+      return;
+    }
+    final accuracy = position.altitudeAccuracy;
+    if (accuracy.isFinite && accuracy > 25) {
+      return;
+    }
+    const alpha = 0.4;
+    final prev = _recordSmoothedAltitude;
+    final smoothed = prev == null ? alt : prev + alpha * (alt - prev);
+    if (prev != null) {
+      final delta = smoothed - prev;
+      // 1 m noise floor on the smoothed signal so small wiggles don't pile up.
+      if (delta >= 1.0) {
+        _recordElevationGain += delta;
+      }
+    }
+    _recordSmoothedAltitude = smoothed;
+  }
+
+  Future<void> _stopRecording() async {
+    if (!_isRecording) {
+      return;
+    }
+    final sub = _recordSubscription;
+    _recordSubscription = null;
+    await sub?.cancel();
+    _recordTickTimer?.cancel();
+    _recordTickTimer = null;
+
+    final startedAt = _recordStartedAt;
+    final endedAt = DateTime.now();
+    final track = List<LatLng>.from(_recordTrack);
+    final distanceMeters = _recordDistanceMeters;
+    final elevationGainMeters = _recordElevationGain;
+    final maxSpeedMps = _recordMaxSpeedMps;
+    final durationSeconds = startedAt == null
+        ? 0
+        : endedAt.difference(startedAt).inSeconds;
+    final avgSpeedMps = durationSeconds > 0
+        ? distanceMeters / durationSeconds
+        : 0.0;
+
+    setState(() {
+      _isRecording = false;
+      _recordStartedAt = null;
+      _recordElapsed = Duration.zero;
+      _recordSmoothedAltitude = null;
+      _recordElevationGain = 0;
+      _recordCurrentSpeedMps = 0;
+      _recordMaxSpeedMps = 0;
+      _recordLastSampleAt = null;
+    });
+
+    if (track.length < 2 || distanceMeters < 5) {
+      if (!mounted) {
+        return;
+      }
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text(
+            'Ride was too short to save. Try again with location moving.',
+          ),
+        ),
+      );
+      setState(() {
+        _recordTrack.clear();
+        _recordDistanceMeters = 0;
+      });
+      return;
+    }
+
+    final defaultName = _defaultRideName(startedAt ?? endedAt);
+    final saved = await _showSaveRideSheet(
+      defaultName: defaultName,
+      distanceMeters: distanceMeters,
+      durationSeconds: durationSeconds,
+      elevationGainMeters: elevationGainMeters,
+      avgSpeedMps: avgSpeedMps,
+      maxSpeedMps: maxSpeedMps,
+    );
+
+    if (saved == null) {
+      setState(() {
+        _recordTrack.clear();
+        _recordDistanceMeters = 0;
+      });
+      return;
+    }
+
+    _addRide(
+      RideEntry(
+        name: saved.name,
+        notes: saved.notes,
+        createdAt: startedAt ?? endedAt,
+        track: track,
+        distanceMeters: distanceMeters,
+        durationSeconds: durationSeconds,
+        elevationGainMeters: elevationGainMeters > 0
+            ? elevationGainMeters
+            : null,
+        avgSpeedMps: avgSpeedMps > 0 ? avgSpeedMps : null,
+        maxSpeedMps: maxSpeedMps > 0 ? maxSpeedMps : null,
+      ),
+    );
+
+    setState(() {
+      _recordTrack.clear();
+      _recordDistanceMeters = 0;
+      _navIndex = 1;
+    });
+    if (!mounted) {
+      return;
+    }
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text('Saved "${saved.name}" to Rides')),
+    );
+  }
+
+  String _defaultRideName(DateTime t) {
+    final m = t.month.toString().padLeft(2, '0');
+    final d = t.day.toString().padLeft(2, '0');
+    final hh = t.hour.toString().padLeft(2, '0');
+    final mm = t.minute.toString().padLeft(2, '0');
+    return 'Ride $m/$d $hh:$mm';
+  }
+
+  String _formatDistanceMeters(double meters) {
+    if (meters >= 1000) {
+      return '${(meters / 1000).toStringAsFixed(2)} km';
+    }
+    return '${meters.toStringAsFixed(0)} m';
+  }
+
+  String _formatDurationSeconds(int seconds) {
+    final h = seconds ~/ 3600;
+    final m = (seconds % 3600) ~/ 60;
+    final s = seconds % 60;
+    String two(int n) => n.toString().padLeft(2, '0');
+    if (h > 0) {
+      return '$h:${two(m)}:${two(s)}';
+    }
+    return '${two(m)}:${two(s)}';
+  }
+
+  String _formatElevationGainMeters(double meters) {
+    if (meters >= 1000) {
+      return '↑${(meters / 1000).toStringAsFixed(2)} km';
+    }
+    return '↑${meters.toStringAsFixed(0)} m';
+  }
+
+  Future<({String name, String notes})?> _showSaveRideSheet({
+    required String defaultName,
+    required double distanceMeters,
+    required int durationSeconds,
+    required double elevationGainMeters,
+    required double avgSpeedMps,
+    required double maxSpeedMps,
+  }) async {
+    final nameController = TextEditingController(text: defaultName);
+    final notesController = TextEditingController();
+    final distLabel = _formatDistanceMeters(distanceMeters);
+    final durLabel = _formatDurationSeconds(durationSeconds);
+    final showElevation = elevationGainMeters >= 1;
+    final elevLabel = _formatElevationGainMeters(elevationGainMeters);
+    final showAvgSpeed = avgSpeedMps > 0.1;
+    final showMaxSpeed = maxSpeedMps > 0.1;
+    final avgLabel = 'Avg ${_formatSpeedKmh(avgSpeedMps)} km/h';
+    final maxLabel = 'Max ${_formatSpeedKmh(maxSpeedMps)} km/h';
+
+    final result = await showModalBottomSheet<({String name, String notes})>(
+      context: context,
+      isScrollControlled: true,
+      showDragHandle: true,
+      builder: (sheetContext) {
+        final insets = MediaQuery.of(sheetContext).viewInsets;
+        return Padding(
+          padding: EdgeInsets.fromLTRB(16, 8, 16, 24 + insets.bottom),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Text(
+                'Save your ride',
+                style: Theme.of(sheetContext).textTheme.titleLarge,
+              ),
+              const SizedBox(height: 8),
+              Wrap(
+                spacing: 8,
+                runSpacing: 8,
+                children: [
+                  Chip(
+                    avatar: const Icon(Icons.straighten, size: 16),
+                    label: Text(distLabel),
+                  ),
+                  Chip(
+                    avatar: const Icon(Icons.timer_outlined, size: 16),
+                    label: Text(durLabel),
+                  ),
+                  if (showElevation)
+                    Chip(
+                      avatar: const Icon(Icons.terrain, size: 16),
+                      label: Text(elevLabel),
+                    ),
+                  if (showAvgSpeed)
+                    Chip(
+                      avatar: const Icon(Icons.speed, size: 16),
+                      label: Text(avgLabel),
+                    ),
+                  if (showMaxSpeed)
+                    Chip(
+                      avatar: const Icon(Icons.bolt, size: 16),
+                      label: Text(maxLabel),
+                    ),
+                ],
+              ),
+              const SizedBox(height: 12),
+              TextField(
+                controller: nameController,
+                textCapitalization: TextCapitalization.sentences,
+                decoration: const InputDecoration(
+                  border: OutlineInputBorder(),
+                  labelText: 'Ride name',
+                ),
+              ),
+              const SizedBox(height: 12),
+              TextField(
+                controller: notesController,
+                textCapitalization: TextCapitalization.sentences,
+                keyboardType: TextInputType.multiline,
+                minLines: 2,
+                maxLines: 4,
+                decoration: const InputDecoration(
+                  border: OutlineInputBorder(),
+                  labelText: 'Notes (optional)',
+                  alignLabelWithHint: true,
+                ),
+              ),
+              const SizedBox(height: 16),
+              Row(
+                children: [
+                  Expanded(
+                    child: OutlinedButton(
+                      onPressed: () => Navigator.of(sheetContext).pop(),
+                      child: const Text('Discard'),
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: FilledButton.icon(
+                      onPressed: () {
+                        final name = nameController.text.trim().isEmpty
+                            ? defaultName
+                            : nameController.text.trim();
+                        Navigator.of(sheetContext).pop(
+                          (name: name, notes: notesController.text.trim()),
+                        );
+                      },
+                      icon: const Icon(Icons.save_outlined),
+                      label: const Text('Save ride'),
+                    ),
+                  ),
+                ],
+              ),
+            ],
+          ),
+        );
+      },
+    );
+    nameController.dispose();
+    notesController.dispose();
+    return result;
   }
 
   void _zoomIn() {
@@ -1066,6 +1571,31 @@ out geom;
                 );
               }).toList(),
             ),
+            if (_focusedRecordedRide != null &&
+                _focusedRecordedRide!.track.length >= 2)
+              PolylineLayer(
+                polylines: [
+                  Polyline(
+                    points: _focusedRecordedRide!.track,
+                    color: const Color(0xFFAA00FF),
+                    strokeWidth: 4.5,
+                    borderStrokeWidth: 2,
+                    borderColor: Colors.white,
+                  ),
+                ],
+              ),
+            if (_recordTrack.length >= 2)
+              PolylineLayer(
+                polylines: [
+                  Polyline(
+                    points: _recordTrack,
+                    color: Colors.redAccent,
+                    strokeWidth: 4.5,
+                    borderStrokeWidth: 2,
+                    borderColor: Colors.white,
+                  ),
+                ],
+              ),
             MarkerLayer(
               markers: [
                 Marker(
@@ -1077,6 +1607,50 @@ out geom;
                     color: Colors.blue,
                   ),
                 ),
+                if (_focusedRecordedRide != null &&
+                    _focusedRecordedRide!.track.length >= 2) ...[
+                  Marker(
+                    point: _focusedRecordedRide!.track.first,
+                    width: 22,
+                    height: 22,
+                    child: Container(
+                      decoration: BoxDecoration(
+                        color: Colors.green.shade600,
+                        shape: BoxShape.circle,
+                        border: Border.all(color: Colors.white, width: 2),
+                      ),
+                      child: const Icon(
+                        Icons.flag,
+                        size: 12,
+                        color: Colors.white,
+                      ),
+                    ),
+                  ),
+                  Marker(
+                    point: _focusedRecordedRide!.track.last,
+                    width: 22,
+                    height: 22,
+                    child: Container(
+                      decoration: BoxDecoration(
+                        color: const Color(0xFFAA00FF),
+                        shape: BoxShape.circle,
+                        border: Border.all(color: Colors.white, width: 2),
+                      ),
+                      child: const Icon(
+                        Icons.sports_score,
+                        size: 12,
+                        color: Colors.white,
+                      ),
+                    ),
+                  ),
+                ],
+                if (_recordTrack.isNotEmpty)
+                  Marker(
+                    point: _recordTrack.last,
+                    width: 18,
+                    height: 18,
+                    child: const _RecordingPulseDot(),
+                  ),
               ],
             ),
             RichAttributionWidget(
@@ -1161,15 +1735,73 @@ out geom;
         Positioned(
           top: statusBarH + 128,
           right: 12,
-          child: Card(
-            color: Colors.white.withAlpha(230),
-            child: Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-              child: Text(
-                '${_trails.length} bike trails in $radiusLabel-mile radius',
-                style: const TextStyle(fontWeight: FontWeight.w600),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.end,
+            children: [
+              Card(
+                color: Colors.white.withAlpha(230),
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 10,
+                    vertical: 6,
+                  ),
+                  child: Text(
+                    '${_trails.length} bike trails in $radiusLabel-mile radius',
+                    style: const TextStyle(fontWeight: FontWeight.w600),
+                  ),
+                ),
               ),
-            ),
+              if (_focusedRecordedRide != null)
+                Padding(
+                  padding: const EdgeInsets.only(top: 6),
+                  child: Card(
+                    color: const Color(0xFFAA00FF).withValues(alpha: 0.92),
+                    child: Padding(
+                      padding: const EdgeInsets.fromLTRB(10, 4, 4, 4),
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          const Icon(
+                            Icons.route,
+                            color: Colors.white,
+                            size: 16,
+                          ),
+                          const SizedBox(width: 6),
+                          ConstrainedBox(
+                            constraints: const BoxConstraints(maxWidth: 160),
+                            child: Text(
+                              _focusedRecordedRide!.name,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: const TextStyle(
+                                color: Colors.white,
+                                fontWeight: FontWeight.w600,
+                                fontSize: 12,
+                              ),
+                            ),
+                          ),
+                          IconButton(
+                            onPressed: () => setState(
+                              () => _focusedRecordedRide = null,
+                            ),
+                            tooltip: 'Clear ride view',
+                            icon: const Icon(
+                              Icons.close,
+                              color: Colors.white,
+                              size: 16,
+                            ),
+                            padding: EdgeInsets.zero,
+                            constraints: const BoxConstraints(
+                              minWidth: 28,
+                              minHeight: 28,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                ),
+            ],
           ),
         ),
         Positioned(
@@ -1406,6 +2038,100 @@ out geom;
             ],
           ),
         ),
+        Positioned(
+          right: 12,
+          bottom: 12,
+          child: _isRecording
+              ? Material(
+                  elevation: 6,
+                  borderRadius: BorderRadius.circular(28),
+                  color: Theme.of(context).colorScheme.surface,
+                  child: Padding(
+                    padding: const EdgeInsets.fromLTRB(12, 8, 8, 8),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        const _RecordingPulseDot(),
+                        const SizedBox(width: 10),
+                        Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Row(
+                              mainAxisSize: MainAxisSize.min,
+                              crossAxisAlignment: CrossAxisAlignment.baseline,
+                              textBaseline: TextBaseline.alphabetic,
+                              children: [
+                                Text(
+                                  _formatDurationSeconds(
+                                    _recordElapsed.inSeconds,
+                                  ),
+                                  style: const TextStyle(
+                                    fontFeatures: [
+                                      FontFeature.tabularFigures(),
+                                    ],
+                                    fontWeight: FontWeight.w700,
+                                    fontSize: 15,
+                                  ),
+                                ),
+                                const SizedBox(width: 8),
+                                Text(
+                                  '${_formatSpeedKmh(_recordCurrentSpeedMps)} km/h',
+                                  style: const TextStyle(
+                                    fontFeatures: [
+                                      FontFeature.tabularFigures(),
+                                    ],
+                                    fontWeight: FontWeight.w600,
+                                    fontSize: 13,
+                                  ),
+                                ),
+                              ],
+                            ),
+                            Text(
+                              _recordingChipFooterText(),
+                              style: const TextStyle(fontSize: 11),
+                            ),
+                          ],
+                        ),
+                        const SizedBox(width: 10),
+                        FilledButton.icon(
+                          onPressed: _stopRecording,
+                          style: FilledButton.styleFrom(
+                            backgroundColor: Colors.redAccent,
+                            foregroundColor: Colors.white,
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 12,
+                              vertical: 8,
+                            ),
+                          ),
+                          icon: const Icon(Icons.stop, size: 16),
+                          label: const Text('Stop'),
+                        ),
+                      ],
+                    ),
+                  ),
+                )
+              : Material(
+                  elevation: 6,
+                  shape: const CircleBorder(),
+                  color: Colors.redAccent,
+                  child: InkWell(
+                    customBorder: const CircleBorder(),
+                    onTap: _startRecording,
+                    child: const Padding(
+                      padding: EdgeInsets.all(14),
+                      child: Tooltip(
+                        message: 'Record a ride',
+                        child: Icon(
+                          Icons.fiber_manual_record,
+                          color: Colors.white,
+                          size: 22,
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+        ),
       ],
     );
   }
@@ -1456,35 +2182,56 @@ out geom;
                     separatorBuilder: (_, _) => const Divider(height: 1),
                     itemBuilder: (context, index) {
                       final ride = _rides[index];
+                      final stats = <String>[];
+                      final distLabel = ride.distanceLabel();
+                      final durLabel = ride.durationLabel();
+                      final elevLabel = ride.elevationGainLabel();
+                      final avgLabel = ride.avgSpeedLabel();
+                      if (distLabel != null) stats.add(distLabel);
+                      if (durLabel != null) stats.add(durLabel);
+                      if (elevLabel != null) stats.add(elevLabel);
+                      if (avgLabel != null) stats.add(avgLabel);
+                      stats.add(ride.createdLabel());
+                      final statsLine = stats.join(' · ');
+                      final subtitleText = ride.notes.isEmpty
+                          ? statsLine
+                          : '${ride.notes}\n$statsLine';
                       return ListTile(
                         contentPadding: const EdgeInsets.symmetric(
                           vertical: 4,
                           horizontal: 4,
                         ),
                         leading: CircleAvatar(
-                          backgroundColor: Theme.of(
-                            context,
-                          ).colorScheme.primaryContainer,
+                          backgroundColor: ride.hasRecordedTrack
+                              ? Colors.redAccent.withValues(alpha: 0.15)
+                              : Theme.of(
+                                  context,
+                                ).colorScheme.primaryContainer,
                           child: Icon(
-                            Icons.directions_bike,
-                            color: Theme.of(
-                              context,
-                            ).colorScheme.onPrimaryContainer,
+                            ride.hasRecordedTrack
+                                ? Icons.route
+                                : Icons.directions_bike,
+                            color: ride.hasRecordedTrack
+                                ? Colors.redAccent
+                                : Theme.of(
+                                    context,
+                                  ).colorScheme.onPrimaryContainer,
                           ),
                         ),
                         title: Text(ride.name),
-                        subtitle: ride.notes.isEmpty
-                            ? Text(ride.createdLabel())
-                            : Text(
-                                '${ride.notes}\n${ride.createdLabel()}',
-                                maxLines: 4,
-                                overflow: TextOverflow.ellipsis,
-                              ),
+                        subtitle: Text(
+                          subtitleText,
+                          maxLines: 4,
+                          overflow: TextOverflow.ellipsis,
+                        ),
                         trailing: IconButton(
                           icon: const Icon(Icons.delete_outline),
                           tooltip: 'Remove ride',
                           onPressed: () => _removeRideAt(index),
                         ),
+                        onTap: ride.hasRecordedTrack
+                            ? () => _focusRecordedRideOnMap(ride)
+                            : null,
                       );
                     },
                   ),
@@ -1988,12 +2735,29 @@ Widget _trailDifficultyLegendSwatch(int tier) {
 }
 
 class RideEntry {
-  RideEntry({required this.name, this.notes = '', DateTime? createdAt})
-    : createdAt = createdAt ?? DateTime.now();
+  RideEntry({
+    required this.name,
+    this.notes = '',
+    DateTime? createdAt,
+    this.track = const [],
+    this.distanceMeters,
+    this.durationSeconds,
+    this.elevationGainMeters,
+    this.avgSpeedMps,
+    this.maxSpeedMps,
+  }) : createdAt = createdAt ?? DateTime.now();
 
   final String name;
   final String notes;
   final DateTime createdAt;
+  final List<LatLng> track;
+  final double? distanceMeters;
+  final int? durationSeconds;
+  final double? elevationGainMeters;
+  final double? avgSpeedMps;
+  final double? maxSpeedMps;
+
+  bool get hasRecordedTrack => track.length >= 2;
 
   String createdLabel() {
     final d = createdAt;
@@ -2002,21 +2766,105 @@ class RideEntry {
     return '${d.year}-$m-$day';
   }
 
+  String? distanceLabel() {
+    final m = distanceMeters;
+    if (m == null) {
+      return null;
+    }
+    if (m >= 1000) {
+      return '${(m / 1000).toStringAsFixed(2)} km';
+    }
+    return '${m.toStringAsFixed(0)} m';
+  }
+
+  String? durationLabel() {
+    final s = durationSeconds;
+    if (s == null) {
+      return null;
+    }
+    final h = s ~/ 3600;
+    final m = (s % 3600) ~/ 60;
+    final sec = s % 60;
+    String two(int n) => n.toString().padLeft(2, '0');
+    if (h > 0) {
+      return '$h:${two(m)}:${two(sec)}';
+    }
+    return '${two(m)}:${two(sec)}';
+  }
+
+  String? elevationGainLabel() {
+    final g = elevationGainMeters;
+    if (g == null || g < 1) {
+      return null;
+    }
+    if (g >= 1000) {
+      return '↑${(g / 1000).toStringAsFixed(2)} km';
+    }
+    return '↑${g.toStringAsFixed(0)} m';
+  }
+
+  String? avgSpeedLabel() {
+    final s = avgSpeedMps;
+    if (s == null || s <= 0.1) {
+      return null;
+    }
+    return 'avg ${(s * 3.6).toStringAsFixed(1)} km/h';
+  }
+
+  String? maxSpeedLabel() {
+    final s = maxSpeedMps;
+    if (s == null || s <= 0.1) {
+      return null;
+    }
+    return 'max ${(s * 3.6).toStringAsFixed(1)} km/h';
+  }
+
   Map<String, dynamic> toJson() => {
     'name': name,
     'notes': notes,
     'createdAt': createdAt.toIso8601String(),
+    if (track.isNotEmpty)
+      'track': track
+          .map((p) => [p.latitude, p.longitude])
+          .toList(growable: false),
+    if (distanceMeters != null) 'distanceMeters': distanceMeters,
+    if (durationSeconds != null) 'durationSeconds': durationSeconds,
+    if (elevationGainMeters != null) 'elevationGainMeters': elevationGainMeters,
+    if (avgSpeedMps != null) 'avgSpeedMps': avgSpeedMps,
+    if (maxSpeedMps != null) 'maxSpeedMps': maxSpeedMps,
   };
 
   factory RideEntry.fromJson(Map<String, dynamic> json) {
     final nameRaw = json['name'] as String? ?? '';
     final name = nameRaw.trim().isEmpty ? 'Ride' : nameRaw.trim();
+    final trackRaw = json['track'];
+    final track = <LatLng>[];
+    if (trackRaw is List) {
+      for (final p in trackRaw) {
+        if (p is List && p.length == 2 && p[0] is num && p[1] is num) {
+          track.add(
+            LatLng((p[0] as num).toDouble(), (p[1] as num).toDouble()),
+          );
+        }
+      }
+    }
+    final distRaw = json['distanceMeters'];
+    final durRaw = json['durationSeconds'];
+    final elevRaw = json['elevationGainMeters'];
+    final avgRaw = json['avgSpeedMps'];
+    final maxRaw = json['maxSpeedMps'];
     return RideEntry(
       name: name,
       notes: (json['notes'] as String?) ?? '',
       createdAt:
           DateTime.tryParse(json['createdAt'] as String? ?? '') ??
           DateTime.now(),
+      track: track,
+      distanceMeters: distRaw is num ? distRaw.toDouble() : null,
+      durationSeconds: durRaw is num ? durRaw.toInt() : null,
+      elevationGainMeters: elevRaw is num ? elevRaw.toDouble() : null,
+      avgSpeedMps: avgRaw is num ? avgRaw.toDouble() : null,
+      maxSpeedMps: maxRaw is num ? maxRaw.toDouble() : null,
     );
   }
 }
@@ -2046,4 +2894,62 @@ class TrailData {
   final String? osmSacScale;
   final String? tracktype;
   final double lengthKm;
+}
+
+/// Pulsing red dot used to mark the live recording location and the
+/// recording-status chip.
+class _RecordingPulseDot extends StatefulWidget {
+  const _RecordingPulseDot();
+
+  @override
+  State<_RecordingPulseDot> createState() => _RecordingPulseDotState();
+}
+
+class _RecordingPulseDotState extends State<_RecordingPulseDot>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _controller = AnimationController(
+    vsync: this,
+    duration: const Duration(milliseconds: 1100),
+  )..repeat(reverse: true);
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AnimatedBuilder(
+      animation: _controller,
+      builder: (context, _) {
+        final t = _controller.value;
+        return SizedBox(
+          width: 16,
+          height: 16,
+          child: Stack(
+            alignment: Alignment.center,
+            children: [
+              Container(
+                width: 16,
+                height: 16,
+                decoration: BoxDecoration(
+                  color: Colors.redAccent.withValues(alpha: 0.25 * (1 - t)),
+                  shape: BoxShape.circle,
+                ),
+              ),
+              Container(
+                width: 10,
+                height: 10,
+                decoration: const BoxDecoration(
+                  color: Colors.redAccent,
+                  shape: BoxShape.circle,
+                ),
+              ),
+            ],
+          ),
+        );
+      },
+    );
+  }
 }
