@@ -795,68 +795,6 @@ class _HomeScreenState extends State<HomeScreen> {
     }
   }
 
-  Future<void> _showEditAreaDialog() async {
-    final areaController = TextEditingController(text: _areaName);
-    final radiusController = TextEditingController(
-      text: _radiusMiles.toStringAsFixed(0),
-    );
-
-    final result = await showDialog<(String, double)>(
-      context: context,
-      builder: (context) {
-        return AlertDialog(
-          title: const Text('Edit trail search area'),
-          content: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              TextField(
-                controller: areaController,
-                decoration: const InputDecoration(
-                  labelText: 'Location',
-                  hintText: 'Example: Fremont Older Preserve, Bay Area',
-                ),
-              ),
-              const SizedBox(height: 12),
-              TextField(
-                controller: radiusController,
-                keyboardType: const TextInputType.numberWithOptions(
-                  decimal: true,
-                ),
-                decoration: const InputDecoration(
-                  labelText: 'Radius (miles)',
-                  hintText: 'Example: 50',
-                ),
-              ),
-            ],
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.of(context).pop(),
-              child: const Text('Cancel'),
-            ),
-            FilledButton(
-              onPressed: () {
-                final area = areaController.text.trim();
-                final radius = double.tryParse(radiusController.text.trim());
-                if (area.isNotEmpty && radius != null && radius > 0) {
-                  Navigator.of(context).pop((area, radius));
-                }
-              },
-              child: const Text('Save'),
-            ),
-          ],
-        );
-      },
-    );
-
-    if (result != null) {
-      setState(() {
-        _areaName = result.$1;
-        _radiusMiles = result.$2;
-      });
-      await _loadTrails();
-    }
-  }
 
   Future<void> _loadTrails() async {
     setState(() {
@@ -1019,10 +957,6 @@ out geom;
               leading: const Icon(Icons.place_outlined),
               title: const Text('Trail search area'),
               subtitle: Text('$_areaName ($radiusLabel-mile radius)'),
-              trailing: TextButton(
-                onPressed: _showEditAreaDialog,
-                child: const Text('Edit'),
-              ),
             ),
           ),
           const SizedBox(height: 12),
@@ -1047,336 +981,432 @@ out geom;
             style: Theme.of(context).textTheme.bodySmall,
           ),
           const SizedBox(height: 8),
-          Row(
-            children: [
-              Expanded(
-                child: ElevatedButton.icon(
-                  onPressed: _showAddRideDialog,
-                  icon: const Icon(Icons.add_road),
-                  label: const Text('Add ride'),
-                ),
-              ),
-              const SizedBox(width: 8),
-              Expanded(
-                child: FilledButton.tonalIcon(
-                  onPressed: _showBrowseTrailsSheet,
-                  icon: const Icon(Icons.list_alt_outlined),
-                  label: const Text('Browse trails'),
-                ),
-              ),
-            ],
+          ElevatedButton.icon(
+            onPressed: _showAddRideDialog,
+            icon: const Icon(Icons.add_road),
+            label: const Text('Add ride'),
           ),
-          const SizedBox(height: 8),
-          Autocomplete<TrailData>(
-            displayStringForOption: (trail) => trail.name,
-            optionsBuilder: (TextEditingValue value) {
-              final q = value.text.trim().toLowerCase();
-              if (q.isEmpty || _trails.isEmpty) {
-                return const Iterable<TrailData>.empty();
-              }
-              final list = _trails
-                  .where((t) => t.name.toLowerCase().contains(q))
-                  .toList();
-              list.sort(
-                (a, b) =>
-                    a.name.toLowerCase().compareTo(b.name.toLowerCase()),
-              );
-              return list.take(20);
+        ],
+      ),
+    );
+  }
+
+  Widget _buildMapTab(BuildContext context, String radiusLabel) {
+    final statusBarH = MediaQuery.of(context).padding.top;
+    return Stack(
+      children: [
+        FlutterMap(
+          mapController: _mapController,
+          options: MapOptions(
+            initialCenter: _mapCenter,
+            initialZoom: _mapZoom,
+            onMapReady: () {
+              WidgetsBinding.instance.addPostFrameCallback((_) {
+                if (mounted) {
+                  _loadTrails();
+                }
+              });
             },
-            onSelected: (trail) {
-              _focusTrailOnMap(trail);
-              FocusManager.instance.primaryFocus?.unfocus();
+            interactionOptions: const InteractionOptions(
+              flags: InteractiveFlag.all,
+            ),
+            onPositionChanged: (position, _) {
+              final center = position.center;
+              final zoom = position.zoom;
+              setState(() {
+                _mapCenter = center;
+                _mapZoom = zoom;
+              });
+              _schedulePersistMapView();
             },
-            fieldViewBuilder:
-                (context, textController, focusNode, onFieldSubmitted) {
-              return TextField(
-                controller: textController,
-                focusNode: focusNode,
-                textInputAction: TextInputAction.search,
-                decoration: InputDecoration(
-                  labelText: 'Search trail on map',
-                  hintText: 'Type name, choose a suggestion, or press search',
-                  border: const OutlineInputBorder(),
-                  prefixIcon: const Icon(Icons.search),
-                  suffixIcon: textController.text.isEmpty
-                      ? null
-                      : IconButton(
-                          tooltip: 'Clear',
-                          icon: const Icon(Icons.clear),
-                          onPressed: () {
-                            textController.clear();
-                            setState(() {});
-                          },
-                        ),
-                ),
-                onChanged: (_) => setState(() {}),
-                onSubmitted: (value) {
-                  _tryFocusTrailFromSearchQuery(value);
-                  FocusManager.instance.primaryFocus?.unfocus();
-                },
-              );
-            },
+            onTap: _onMapTap,
           ),
-          const SizedBox(height: 12),
-          Expanded(
-            child: ClipRRect(
-              borderRadius: BorderRadius.circular(12),
-              child: Stack(
-                children: [
-                  FlutterMap(
-                    mapController: _mapController,
-                    options: MapOptions(
-                      initialCenter: _mapCenter,
-                      initialZoom: _mapZoom,
-                      onMapReady: () {
-                        WidgetsBinding.instance.addPostFrameCallback((_) {
-                          if (mounted) {
-                            _loadTrails();
-                          }
-                        });
-                      },
-                      interactionOptions: const InteractionOptions(
-                        flags: InteractiveFlag.all,
-                      ),
-                      onPositionChanged: (position, _) {
-                        final center = position.center;
-                        final zoom = position.zoom;
-                        setState(() {
-                          _mapCenter = center;
-                          _mapZoom = zoom;
-                        });
-                        _schedulePersistMapView();
-                      },
-                      onTap: _onMapTap,
+          children: [
+            TileLayer(
+              urlTemplate: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
+              userAgentPackageName: 'com.example.wildhorizon',
+            ),
+            CircleLayer(
+              circles: [
+                CircleMarker(
+                  point: _mapCenter,
+                  radius: _radiusMeters,
+                  useRadiusInMeter: true,
+                  color: Colors.green.withAlpha(35),
+                  borderColor: Colors.green.shade700,
+                  borderStrokeWidth: 2,
+                ),
+              ],
+            ),
+            PolylineLayer(
+              polylines: _trails.map((trail) {
+                final selected = trail.osmId == _selectedTrailId;
+                final tier = _trailDifficultyTier(trail);
+                final lineColor = _trailDifficultyColor(tier);
+                final baseWidth = _mapZoom >= 13
+                    ? 5.0
+                    : _mapZoom >= 11
+                    ? 4.0
+                    : 3.0;
+                final expertDouble = !selected && tier == 3;
+                return Polyline(
+                  points: trail.points,
+                  color: lineColor,
+                  strokeWidth: selected
+                      ? baseWidth + 2
+                      : baseWidth + (expertDouble ? 0.5 : 0),
+                  borderStrokeWidth: selected
+                      ? 3.5
+                      : (expertDouble ? 2.25 : 0),
+                  borderColor: selected
+                      ? Colors.yellowAccent.shade400
+                      : (expertDouble
+                            ? const Color(0xFFE0E0E0)
+                            : Colors.transparent),
+                );
+              }).toList(),
+            ),
+            MarkerLayer(
+              markers: [
+                Marker(
+                  point: _mapCenter,
+                  width: 28,
+                  height: 28,
+                  child: const Icon(
+                    Icons.my_location,
+                    color: Colors.blue,
+                  ),
+                ),
+              ],
+            ),
+            RichAttributionWidget(
+              attributions: [
+                TextSourceAttribution('OpenStreetMap contributors'),
+              ],
+            ),
+          ],
+        ),
+        if (_isLoadingTrails)
+          const Positioned.fill(
+            child: ColoredBox(
+              color: Color(0x44000000),
+              child: Center(child: CircularProgressIndicator()),
+            ),
+          ),
+        Positioned(
+          top: statusBarH + 128,
+          left: 12,
+          child: Card(
+            color: Colors.white.withAlpha(230),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                IconButton(
+                  onPressed: _zoomIn,
+                  tooltip: 'Zoom in',
+                  icon: const Icon(Icons.add, size: 18),
+                  padding: const EdgeInsets.all(6),
+                  constraints: const BoxConstraints(),
+                ),
+                const Divider(height: 1),
+                IconButton(
+                  onPressed: _zoomOut,
+                  tooltip: 'Zoom out',
+                  icon: const Icon(Icons.remove, size: 18),
+                  padding: const EdgeInsets.all(6),
+                  constraints: const BoxConstraints(),
+                ),
+              ],
+            ),
+          ),
+        ),
+        if (_trailCompletionTarget != null)
+          Positioned(
+            left: 56,
+            right: 8,
+            top: statusBarH + 128,
+            child: Material(
+              elevation: 4,
+              borderRadius: BorderRadius.circular(8),
+              color: Theme.of(context).colorScheme.surfaceContainerHighest,
+              child: Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+                child: Row(
+                  children: [
+                    Icon(
+                      Icons.navigation_outlined,
+                      size: 18,
+                      color: Theme.of(context).colorScheme.primary,
                     ),
+                    const SizedBox(width: 6),
+                    Expanded(
+                      child: Text(
+                        _trailCompletionReachedStart
+                            ? 'Reach the end of "${_trailCompletionTarget!.name}" to save'
+                            : 'Go to the start of "${_trailCompletionTarget!.name}"',
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                        style: Theme.of(context).textTheme.labelMedium,
+                      ),
+                    ),
+                    TextButton(
+                      onPressed: _cancelTrailCompletionTracking,
+                      child: const Text('Stop'),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+        Positioned(
+          top: statusBarH + 128,
+          right: 12,
+          child: Card(
+            color: Colors.white.withAlpha(230),
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+              child: Text(
+                '${_trails.length} bike trails in $radiusLabel-mile radius',
+                style: const TextStyle(fontWeight: FontWeight.w600),
+              ),
+            ),
+          ),
+        ),
+        Positioned(
+          left: 8,
+          bottom: 8,
+          child: ConstrainedBox(
+            constraints: const BoxConstraints(maxWidth: 210),
+            child: Card(
+              color: Colors.white.withAlpha(235),
+              child: Padding(
+                padding: const EdgeInsets.fromLTRB(8, 8, 8, 8),
+                child: DefaultTextStyle(
+                  style: Theme.of(context).textTheme.labelSmall!,
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    mainAxisSize: MainAxisSize.min,
                     children: [
-                      TileLayer(
-                        urlTemplate:
-                            'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
-                        userAgentPackageName: 'com.example.wildhorizon',
+                      Text(
+                        'Line color = difficulty',
+                        style: Theme.of(context).textTheme.labelMedium
+                            ?.copyWith(fontWeight: FontWeight.w600),
                       ),
-                      CircleLayer(
-                        circles: [
-                          CircleMarker(
-                            point: _mapCenter,
-                            radius: _radiusMeters,
-                            useRadiusInMeter: true,
-                            color: Colors.green.withAlpha(35),
-                            borderColor: Colors.green.shade700,
-                            borderStrokeWidth: 2,
-                          ),
-                        ],
-                      ),
-                      PolylineLayer(
-                        polylines: _trails.map((trail) {
-                          final selected = trail.osmId == _selectedTrailId;
-                          final tier = _trailDifficultyTier(trail);
-                          final lineColor = _trailDifficultyColor(tier);
-                          final baseWidth = _mapZoom >= 13
-                              ? 5.0
-                              : _mapZoom >= 11
-                              ? 4.0
-                              : 3.0;
-                          final expertDouble = !selected && tier == 3;
-                          return Polyline(
-                            points: trail.points,
-                            color: lineColor,
-                            strokeWidth: selected
-                                ? baseWidth + 2
-                                : baseWidth + (expertDouble ? 0.5 : 0),
-                            borderStrokeWidth: selected
-                                ? 3.5
-                                : (expertDouble ? 2.25 : 0),
-                            borderColor: selected
-                                ? Colors.yellowAccent.shade400
-                                : (expertDouble
-                                      ? const Color(0xFFE0E0E0)
-                                      : Colors.transparent),
-                          );
-                        }).toList(),
-                      ),
-                      MarkerLayer(
-                        markers: [
-                          Marker(
-                            point: _mapCenter,
-                            width: 28,
-                            height: 28,
-                            child: const Icon(
-                              Icons.my_location,
-                              color: Colors.blue,
-                            ),
-                          ),
-                        ],
-                      ),
-                      RichAttributionWidget(
-                        attributions: [
-                          TextSourceAttribution('OpenStreetMap contributors'),
-                        ],
-                      ),
-                    ],
-                  ),
-                  if (_isLoadingTrails)
-                    const Positioned.fill(
-                      child: ColoredBox(
-                        color: Color(0x44000000),
-                        child: Center(child: CircularProgressIndicator()),
-                      ),
-                    ),
-                  Positioned(
-                    top: 12,
-                    left: 12,
-                    child: Card(
-                      color: Colors.white.withAlpha(230),
-                      child: Column(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          IconButton(
-                            onPressed: _zoomIn,
-                            tooltip: 'Zoom in',
-                            icon: const Icon(Icons.add),
-                          ),
-                          const Divider(height: 1),
-                          IconButton(
-                            onPressed: _zoomOut,
-                            tooltip: 'Zoom out',
-                            icon: const Icon(Icons.remove),
-                          ),
-                        ],
-                      ),
-                    ),
-                  ),
-                  if (_trailCompletionTarget != null)
-                    Positioned(
-                      left: 56,
-                      right: 120,
-                      top: 8,
-                      child: Material(
-                        elevation: 4,
-                        borderRadius: BorderRadius.circular(8),
-                        color: Theme.of(
-                          context,
-                        ).colorScheme.surfaceContainerHighest,
-                        child: Padding(
-                          padding: const EdgeInsets.symmetric(
-                            horizontal: 8,
-                            vertical: 6,
-                          ),
+                      const SizedBox(height: 4),
+                      for (final tier in const <int>[0, 1, 2, 3])
+                        Padding(
+                          padding: const EdgeInsets.only(top: 2),
                           child: Row(
+                            crossAxisAlignment: CrossAxisAlignment.center,
                             children: [
-                              Icon(
-                                Icons.navigation_outlined,
-                                size: 18,
-                                color: Theme.of(context).colorScheme.primary,
-                              ),
+                              _trailDifficultyLegendSwatch(tier),
                               const SizedBox(width: 6),
-                              Expanded(
-                                child: Text(
-                                  _trailCompletionReachedStart
-                                      ? 'Reach the end of "${_trailCompletionTarget!.name}" to save'
-                                      : 'Go to the start of "${_trailCompletionTarget!.name}"',
-                                  maxLines: 2,
-                                  overflow: TextOverflow.ellipsis,
-                                  style: Theme.of(
-                                    context,
-                                  ).textTheme.labelMedium,
-                                ),
-                              ),
-                              TextButton(
-                                onPressed: _cancelTrailCompletionTracking,
-                                child: const Text('Stop'),
-                              ),
+                              Text(_trailDifficultyLabel(tier)),
                             ],
                           ),
                         ),
+                      Padding(
+                        padding: const EdgeInsets.only(top: 4),
+                        child: Row(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            _trailDifficultyLegendSwatch(-1),
+                            const SizedBox(width: 6),
+                            const Expanded(child: Text('Unrated')),
+                          ],
+                        ),
                       ),
-                    ),
-                  Positioned(
-                    top: 12,
-                    right: 12,
-                    child: Card(
-                      color: Colors.white.withAlpha(230),
-                      child: Padding(
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: 10,
-                          vertical: 6,
-                        ),
-                        child: Text(
-                          '${_trails.length} bike trails in $radiusLabel-mile radius',
-                          style: const TextStyle(fontWeight: FontWeight.w600),
-                        ),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ),
+        if (_trailError != null)
+          Positioned(
+            bottom: 8,
+            left: 8,
+            right: 8,
+            child: Card(
+              color: Theme.of(context).colorScheme.errorContainer,
+              child: Padding(
+                padding: const EdgeInsets.all(8),
+                child: Text(
+                  _trailError!,
+                  style: TextStyle(color: Theme.of(context).colorScheme.error),
+                ),
+              ),
+            ),
+          ),
+        Positioned(
+          top: statusBarH + 8,
+          left: 8,
+          right: 8,
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Row(
+                children: [
+                  Expanded(
+                    child: Material(
+                      elevation: 4,
+                      borderRadius: BorderRadius.circular(28),
+                      color: Theme.of(context).colorScheme.surface,
+                      child: Autocomplete<TrailData>(
+                        displayStringForOption: (trail) => trail.name,
+                        optionsBuilder: (TextEditingValue value) {
+                          final q = value.text.trim().toLowerCase();
+                          if (q.isEmpty || _trails.isEmpty) {
+                            return const Iterable<TrailData>.empty();
+                          }
+                          final list = _trails
+                              .where((t) => t.name.toLowerCase().contains(q))
+                              .toList();
+                          list.sort(
+                            (a, b) => a.name
+                                .toLowerCase()
+                                .compareTo(b.name.toLowerCase()),
+                          );
+                          return list.take(20);
+                        },
+                        onSelected: (trail) {
+                          _focusTrailOnMap(trail);
+                          FocusManager.instance.primaryFocus?.unfocus();
+                        },
+                        fieldViewBuilder: (
+                          context,
+                          textController,
+                          focusNode,
+                          onFieldSubmitted,
+                        ) {
+                          return TextField(
+                            controller: textController,
+                            focusNode: focusNode,
+                            textInputAction: TextInputAction.search,
+                            decoration: InputDecoration(
+                              hintText: 'Search trails...',
+                              border: OutlineInputBorder(
+                                borderRadius: BorderRadius.circular(28),
+                                borderSide: BorderSide.none,
+                              ),
+                              filled: true,
+                              fillColor: Colors.transparent,
+                              prefixIcon: const Icon(Icons.search, size: 18),
+                              suffixIcon: textController.text.isEmpty
+                                  ? null
+                                  : IconButton(
+                                      tooltip: 'Clear',
+                                      icon: const Icon(Icons.clear, size: 16),
+                                      onPressed: () {
+                                        textController.clear();
+                                        setState(() {});
+                                      },
+                                    ),
+                              contentPadding: const EdgeInsets.symmetric(
+                                horizontal: 14,
+                                vertical: 10,
+                              ),
+                            ),
+                            onChanged: (_) => setState(() {}),
+                            onSubmitted: (value) {
+                              _tryFocusTrailFromSearchQuery(value);
+                              FocusManager.instance.primaryFocus?.unfocus();
+                            },
+                          );
+                        },
                       ),
                     ),
                   ),
-                  Positioned(
-                    left: 8,
-                    bottom: 8,
-                    child: ConstrainedBox(
-                      constraints: const BoxConstraints(maxWidth: 210),
-                      child: Card(
-                        color: Colors.white.withAlpha(235),
-                        child: Padding(
-                          padding: const EdgeInsets.fromLTRB(8, 8, 8, 8),
-                          child: DefaultTextStyle(
-                            style: Theme.of(context).textTheme.labelSmall!,
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              mainAxisSize: MainAxisSize.min,
-                              children: [
-                                Text(
-                                  'Line color = difficulty',
-                                  style: Theme.of(context).textTheme.labelMedium
-                                      ?.copyWith(fontWeight: FontWeight.w600),
-                                ),
-                                const SizedBox(height: 4),
-                                for (final tier in const <int>[0, 1, 2, 3])
-                                  Padding(
-                                    padding: const EdgeInsets.only(top: 2),
-                                    child: Row(
-                                      crossAxisAlignment:
-                                          CrossAxisAlignment.center,
-                                      children: [
-                                        _trailDifficultyLegendSwatch(tier),
-                                        const SizedBox(width: 6),
-                                        Text(_trailDifficultyLabel(tier)),
-                                      ],
-                                    ),
-                                  ),
-                                Padding(
-                                  padding: const EdgeInsets.only(top: 4),
-                                  child: Row(
-                                    crossAxisAlignment:
-                                        CrossAxisAlignment.start,
-                                    children: [
-                                      _trailDifficultyLegendSwatch(-1),
-                                      const SizedBox(width: 6),
-                                      const Expanded(
-                                        child: Text(
-                                          'Unrated',
-                                        ),
-                                      ),
-                                    ],
-                                  ),
-                                ),
-                              ],
-                            ),
-                          ),
-                        ),
+                  const SizedBox(width: 8),
+                  FilledButton.icon(
+                    onPressed: _showBrowseTrailsSheet,
+                    icon: const Icon(Icons.list_alt_outlined, size: 16),
+                    label: const Text('Search'),
+                    style: FilledButton.styleFrom(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 12,
+                        vertical: 10,
                       ),
+                      textStyle: const TextStyle(fontSize: 13),
+                      minimumSize: Size.zero,
+                      tapTargetSize: MaterialTapTargetSize.shrinkWrap,
                     ),
                   ),
                 ],
               ),
-            ),
+              const SizedBox(height: 8),
+              Row(
+                children: [
+                  Material(
+                    elevation: 4,
+                    shape: const CircleBorder(),
+                    color: Theme.of(context).colorScheme.surface,
+                    child: IconButton(
+                      onPressed: _isLoadingTrails ? null : _loadTrails,
+                      icon: const Icon(Icons.refresh, size: 18),
+                      padding: const EdgeInsets.all(8),
+                      constraints: const BoxConstraints(),
+                      tooltip: 'Refresh trails',
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  Material(
+                    elevation: 4,
+                    borderRadius: BorderRadius.circular(20),
+                    color: Theme.of(context).colorScheme.surface,
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        IconButton(
+                          onPressed: _radiusMiles > 5
+                              ? () {
+                                  setState(
+                                    () => _radiusMiles =
+                                        (_radiusMiles - 5).clamp(5, 500),
+                                  );
+                                  _loadTrails();
+                                }
+                              : null,
+                          icon: const Icon(Icons.remove, size: 16),
+                          padding: const EdgeInsets.all(8),
+                          constraints: const BoxConstraints(),
+                          tooltip: 'Decrease radius',
+                        ),
+                        Padding(
+                          padding: const EdgeInsets.symmetric(horizontal: 6),
+                          child: Text(
+                            '${_radiusMiles.toStringAsFixed(0)} mi',
+                            style: const TextStyle(
+                              fontWeight: FontWeight.w600,
+                              fontSize: 13,
+                            ),
+                          ),
+                        ),
+                        IconButton(
+                          onPressed: _radiusMiles < 500
+                              ? () {
+                                  setState(
+                                    () => _radiusMiles =
+                                        (_radiusMiles + 5).clamp(5, 500),
+                                  );
+                                  _loadTrails();
+                                }
+                              : null,
+                          icon: const Icon(Icons.add, size: 16),
+                          padding: const EdgeInsets.all(8),
+                          constraints: const BoxConstraints(),
+                          tooltip: 'Increase radius',
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+            ],
           ),
-          if (_trailError != null) ...[
-            const SizedBox(height: 8),
-            Text(
-              _trailError!,
-              style: TextStyle(color: Theme.of(context).colorScheme.error),
-            ),
-          ],
-        ],
-      ),
+        ),
+      ],
     );
   }
 
@@ -1512,15 +1542,16 @@ out geom;
   @override
   Widget build(BuildContext context) {
     final radiusLabel = _radiusMiles.toStringAsFixed(0);
-    const navTitles = ['WildHorizon', 'Rides', 'Settings'];
+    const navTitles = ['WildHorizon', 'Rides', 'Map', 'Settings'];
 
     return Scaffold(
-      appBar: AppBar(title: Text(navTitles[_navIndex])),
+      appBar: _navIndex == 2 ? null : AppBar(title: Text(navTitles[_navIndex])),
       body: IndexedStack(
         index: _navIndex,
         children: [
           _buildHomeTab(context, radiusLabel),
           _buildRidesTab(context),
+          _buildMapTab(context, radiusLabel),
           _buildSettingsTab(context),
         ],
       ),
@@ -1541,6 +1572,11 @@ out geom;
             icon: Icon(Icons.directions_bike_outlined),
             selectedIcon: Icon(Icons.directions_bike),
             label: 'Rides',
+          ),
+          NavigationDestination(
+            icon: Icon(Icons.map_outlined),
+            selectedIcon: Icon(Icons.map),
+            label: 'Map',
           ),
           NavigationDestination(
             icon: Icon(Icons.settings_outlined),
