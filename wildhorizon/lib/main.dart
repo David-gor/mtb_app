@@ -1,8 +1,12 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:io';
 import 'dart:math' as math;
+import 'dart:typed_data';
+import 'dart:ui' as ui;
 
 import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart';
 import 'package:flutter_map/flutter_map.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:http/http.dart' as http;
@@ -13,19 +17,211 @@ void main() {
   runApp(const MyApp());
 }
 
-class MyApp extends StatelessWidget {
+/// Outdoorsy forest-green used as the Material 3 seed for both themes.
+const Color _wildHorizonSeed = Color(0xFF386641);
+
+class MyApp extends StatefulWidget {
   const MyApp({super.key});
+
+  /// Allows descendants (Settings) to change theme mode at runtime.
+  static _MyAppState? of(BuildContext context) =>
+      context.findAncestorStateOfType<_MyAppState>();
+
+  @override
+  State<MyApp> createState() => _MyAppState();
+}
+
+class _MyAppState extends State<MyApp> {
+  ThemeMode _themeMode = ThemeMode.system;
+
+  ThemeMode get themeMode => _themeMode;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadThemeMode();
+  }
+
+  Future<void> _loadThemeMode() async {
+    final prefs = await SharedPreferences.getInstance();
+    final raw = prefs.getString('theme_mode_v1');
+    final restored = ThemeMode.values.firstWhere(
+      (m) => m.name == raw,
+      orElse: () => ThemeMode.system,
+    );
+    if (!mounted || restored == _themeMode) {
+      return;
+    }
+    setState(() => _themeMode = restored);
+  }
+
+  Future<void> setThemeMode(ThemeMode mode) async {
+    if (mode == _themeMode) {
+      return;
+    }
+    setState(() => _themeMode = mode);
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString('theme_mode_v1', mode.name);
+  }
 
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
       title: 'WildHorizon',
-      theme: ThemeData(
-        colorScheme: ColorScheme.fromSeed(seedColor: Colors.green),
-      ),
+      theme: _buildAppTheme(Brightness.light),
+      darkTheme: _buildAppTheme(Brightness.dark),
+      themeMode: _themeMode,
       home: const HomeScreen(),
     );
   }
+}
+
+/// Material 3 theme tuned for a modern 2026 look: forest-green seed,
+/// surface-tinted flat cards, generous rounding, and floating snackbars.
+ThemeData _buildAppTheme(Brightness brightness) {
+  final colorScheme = ColorScheme.fromSeed(
+    seedColor: _wildHorizonSeed,
+    brightness: brightness,
+  );
+
+  final base = ThemeData(
+    colorScheme: colorScheme,
+    useMaterial3: true,
+    scaffoldBackgroundColor: colorScheme.surface,
+    appBarTheme: AppBarTheme(
+      backgroundColor: colorScheme.surface,
+      foregroundColor: colorScheme.onSurface,
+      surfaceTintColor: Colors.transparent,
+      elevation: 0,
+      scrolledUnderElevation: 0,
+      centerTitle: false,
+      titleTextStyle: TextStyle(
+        color: colorScheme.onSurface,
+        fontWeight: FontWeight.w700,
+        fontSize: 20,
+        letterSpacing: -0.2,
+      ),
+    ),
+    cardTheme: CardThemeData(
+      elevation: 0,
+      color: colorScheme.surfaceContainerLow,
+      surfaceTintColor: Colors.transparent,
+      margin: EdgeInsets.zero,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(20),
+      ),
+    ),
+    filledButtonTheme: FilledButtonThemeData(
+      style: FilledButton.styleFrom(
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(14),
+        ),
+        padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 12),
+      ),
+    ),
+    outlinedButtonTheme: OutlinedButtonThemeData(
+      style: OutlinedButton.styleFrom(
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(14),
+        ),
+        padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 12),
+        side: BorderSide(color: colorScheme.outlineVariant),
+      ),
+    ),
+    elevatedButtonTheme: ElevatedButtonThemeData(
+      style: ElevatedButton.styleFrom(
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(14),
+        ),
+        padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 12),
+      ),
+    ),
+    segmentedButtonTheme: SegmentedButtonThemeData(
+      style: SegmentedButton.styleFrom(
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(14),
+        ),
+      ),
+    ),
+    inputDecorationTheme: InputDecorationTheme(
+      filled: true,
+      fillColor: colorScheme.surfaceContainerHighest,
+      border: OutlineInputBorder(
+        borderRadius: BorderRadius.circular(14),
+        borderSide: BorderSide.none,
+      ),
+      enabledBorder: OutlineInputBorder(
+        borderRadius: BorderRadius.circular(14),
+        borderSide: BorderSide.none,
+      ),
+      focusedBorder: OutlineInputBorder(
+        borderRadius: BorderRadius.circular(14),
+        borderSide: BorderSide(color: colorScheme.primary, width: 1.5),
+      ),
+    ),
+    snackBarTheme: SnackBarThemeData(
+      behavior: SnackBarBehavior.floating,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(14),
+      ),
+      backgroundColor: colorScheme.inverseSurface,
+      contentTextStyle: TextStyle(
+        color: colorScheme.onInverseSurface,
+        fontWeight: FontWeight.w500,
+      ),
+    ),
+    dialogTheme: DialogThemeData(
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(24),
+      ),
+      backgroundColor: colorScheme.surfaceContainerHigh,
+    ),
+    bottomSheetTheme: BottomSheetThemeData(
+      backgroundColor: colorScheme.surfaceContainerLow,
+      surfaceTintColor: Colors.transparent,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(28)),
+      ),
+    ),
+    navigationBarTheme: NavigationBarThemeData(
+      backgroundColor: colorScheme.surface,
+      surfaceTintColor: Colors.transparent,
+      indicatorColor: colorScheme.primaryContainer,
+      labelTextStyle: WidgetStatePropertyAll(
+        TextStyle(
+          fontSize: 12,
+          fontWeight: FontWeight.w600,
+          color: colorScheme.onSurface,
+        ),
+      ),
+      iconTheme: WidgetStatePropertyAll(
+        IconThemeData(color: colorScheme.onSurfaceVariant),
+      ),
+      height: 72,
+      elevation: 0,
+    ),
+    listTileTheme: ListTileThemeData(
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(16),
+      ),
+    ),
+  );
+
+  return base.copyWith(
+    textTheme: base.textTheme.copyWith(
+      titleLarge: base.textTheme.titleLarge?.copyWith(
+        fontWeight: FontWeight.w700,
+        letterSpacing: -0.4,
+      ),
+      titleMedium: base.textTheme.titleMedium?.copyWith(
+        fontWeight: FontWeight.w600,
+      ),
+      headlineLarge: base.textTheme.headlineLarge?.copyWith(
+        fontWeight: FontWeight.w800,
+        letterSpacing: -0.8,
+      ),
+    ),
+  );
 }
 
 /// Meters from [p] to the closest point on segment [a]–[b] (planar equirectangular; fine for short OSM edges).
@@ -111,32 +307,38 @@ class _HomeScreenState extends State<HomeScreen> {
   final Distance _distance = const Distance();
   Timer? _mapViewSaveTimer;
 
-  // Live ride recording state.
-  bool _isRecording = false;
-  final List<LatLng> _recordTrack = [];
-  DateTime? _recordStartedAt;
-  double _recordDistanceMeters = 0;
-  Duration _recordElapsed = Duration.zero;
-  StreamSubscription<Position>? _recordSubscription;
-  Timer? _recordTickTimer;
-
-  // Elevation tracking. GPS altitude is noisy, so we keep a smoothed value
-  // and only count deltas above a small noise floor.
-  double? _recordSmoothedAltitude;
-  double _recordElevationGain = 0;
-
-  // Speed tracking. Prefer the GPS-reported `position.speed` (m/s); fall back
-  // to step-distance / dt computed from the previous accepted sample.
-  double _recordCurrentSpeedMps = 0;
-  double _recordMaxSpeedMps = 0;
-  DateTime? _recordLastSampleAt;
+  /// Owns all live-recording state and the GPS subscription. The recording
+  /// UI lives in [_RecordingScreen]; this state is shared so the home screen
+  /// can also react if needed.
+  final _RecordingSession _recordingSession = _RecordingSession();
 
   /// Saved ride whose recorded track is currently highlighted on the map.
   RideEntry? _focusedRecordedRide;
 
+  /// User's preferred display units. Metric by default; toggled from
+  /// Settings → Units. Persisted under `units_v1`.
+  UnitSystem _units = UnitSystem.metric;
+
+  /// Cached current conditions for the most recently visited area.
+  WeatherSnapshot? _weather;
+
+  /// Cached 3-day daily forecast aligned with [_weather].
+  List<WeatherDayForecast> _forecast = [];
+  bool _isLoadingWeather = false;
+
+  /// User-pinned weather location. When `null`, weather follows the map
+  /// center. Set via the weather sheet's "Change location" picker.
+  WeatherLocation? _pinnedWeatherLocation;
+
+  /// Map of achievement-id → first-unlock timestamp. Restored on launch
+  /// from `achievements_v1`. Used to drive the badge grid and to compute
+  /// newly-unlocked diffs after saving a ride.
+  Map<String, DateTime> _achievementUnlocks = {};
+
   @override
   void initState() {
     super.initState();
+    _recordingSession.addListener(_onRecordingChange);
     _loadLocalData();
   }
 
@@ -145,11 +347,18 @@ class _HomeScreenState extends State<HomeScreen> {
     _mapViewSaveTimer?.cancel();
     unawaited(_persistMapView());
     _trailCompletionSubscription?.cancel();
-    _recordSubscription?.cancel();
-    _recordTickTimer?.cancel();
+    _recordingSession.removeListener(_onRecordingChange);
+    _recordingSession.dispose();
     _riderNameController.dispose();
     _riderBikeController.dispose();
     super.dispose();
+  }
+
+  void _onRecordingChange() {
+    if (!mounted) {
+      return;
+    }
+    setState(() {});
   }
 
   Future<void> _loadLocalData() async {
@@ -159,6 +368,7 @@ class _HomeScreenState extends State<HomeScreen> {
     }
     _riderNameController.text = prefs.getString('rider_name') ?? '';
     _riderBikeController.text = prefs.getString('rider_bike') ?? '';
+    _units = UnitSystem.fromName(prefs.getString('units_v1'));
 
     final raw = prefs.getString('rides_v1');
     if (raw != null && raw.isNotEmpty) {
@@ -182,6 +392,9 @@ class _HomeScreenState extends State<HomeScreen> {
       restoredMap = true;
     }
 
+    _restoreCachedWeather(prefs);
+    _restoreCachedAchievements(prefs);
+
     setState(() {});
 
     if (restoredMap) {
@@ -192,6 +405,8 @@ class _HomeScreenState extends State<HomeScreen> {
         _mapController.move(_mapCenter, _mapZoom);
       });
     }
+
+    unawaited(_loadWeather());
   }
 
   Future<void> _persistMapView() async {
@@ -492,11 +707,23 @@ class _HomeScreenState extends State<HomeScreen> {
     ).showSnackBar(const SnackBar(content: Text('Rider profile saved')));
   }
 
+  Future<void> _setUnits(UnitSystem units) async {
+    if (units == _units) {
+      return;
+    }
+    setState(() {
+      _units = units;
+    });
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString('units_v1', units.persistName);
+  }
+
   void _addRide(RideEntry ride) {
     setState(() {
       _rides.insert(0, ride);
     });
     _persistRides();
+    _checkForNewAchievements();
   }
 
   void _removeRideAt(int index) {
@@ -680,222 +907,30 @@ class _HomeScreenState extends State<HomeScreen> {
     });
   }
 
-  Future<void> _startRecording() async {
-    if (_isRecording) {
-      return;
-    }
-
-    try {
-      final servicesOn = await Geolocator.isLocationServiceEnabled();
-      if (!servicesOn) {
-        if (!mounted) {
-          return;
-        }
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('Turn on location services to record a ride.'),
-          ),
-        );
-        return;
-      }
-
-      var permission = await Geolocator.checkPermission();
-      if (permission == LocationPermission.denied) {
-        permission = await Geolocator.requestPermission();
-      }
-      if (permission == LocationPermission.denied ||
-          permission == LocationPermission.deniedForever) {
-        if (!mounted) {
-          return;
-        }
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('Location permission is needed to record a ride.'),
-          ),
-        );
-        return;
-      }
-    } catch (e) {
-      if (!mounted) {
-        return;
-      }
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Could not access location: $e')),
-      );
-      return;
-    }
-
-    setState(() {
-      _isRecording = true;
-      _recordTrack.clear();
-      _recordDistanceMeters = 0;
-      _recordStartedAt = DateTime.now();
-      _recordElapsed = Duration.zero;
-      _recordSmoothedAltitude = null;
-      _recordElevationGain = 0;
-      _recordCurrentSpeedMps = 0;
-      _recordMaxSpeedMps = 0;
-      _recordLastSampleAt = null;
-    });
-
-    const settings = LocationSettings(
-      accuracy: LocationAccuracy.bestForNavigation,
-      distanceFilter: 5,
+  /// Opens the dedicated recording screen. The screen owns the session
+  /// lifecycle (start on init, stop on the Stop button). When the user
+  /// stops with a non-trivial ride, the returned [RecordingResult] is
+  /// handed off to the save-sheet flow.
+  Future<void> _openRecordingScreen() async {
+    final stats = await Navigator.of(context).push<RecordingResult?>(
+      MaterialPageRoute(
+        fullscreenDialog: true,
+        builder: (_) => _RecordingScreen(
+          session: _recordingSession,
+          initialCenter: _mapCenter,
+          initialZoom: _mapZoom < 14 ? 14 : _mapZoom,
+          units: _units,
+        ),
+      ),
     );
-    _recordSubscription = Geolocator.getPositionStream(
-      locationSettings: settings,
-    ).listen(_handleRecordPosition, onError: (_) {});
-    _recordTickTimer = Timer.periodic(const Duration(seconds: 1), (_) {
-      final start = _recordStartedAt;
-      if (!mounted || start == null) {
-        return;
-      }
-      setState(() {
-        _recordElapsed = DateTime.now().difference(start);
-      });
-    });
-  }
-
-  void _handleRecordPosition(Position position) {
-    if (!_isRecording || !mounted) {
+    if (stats == null || !mounted) {
       return;
     }
-    final p = LatLng(position.latitude, position.longitude);
-    double stepMeters = 0;
-    if (_recordTrack.isNotEmpty) {
-      final last = _recordTrack.last;
-      stepMeters = _distance.as(LengthUnit.Meter, last, p);
-      // Filter obvious GPS jitter (sub-3m steps) and teleports (>150m jumps).
-      if (stepMeters < 3 || stepMeters > 150) {
-        return;
-      }
-      _recordDistanceMeters += stepMeters;
-    }
-    _updateRecordedElevation(position);
-    _updateRecordedSpeed(position, stepMeters);
-    setState(() {
-      _recordTrack.add(p);
-    });
+    await _saveRecordedRide(stats);
   }
 
-  /// Updates current and max speed. Prefers `position.speed` (GPS-reported,
-  /// m/s) when valid; otherwise falls back to distance / elapsed-since-last.
-  void _updateRecordedSpeed(Position position, double stepMeters) {
-    double speedMps = 0;
-    if (position.speed.isFinite && position.speed >= 0) {
-      speedMps = position.speed;
-    } else {
-      final last = _recordLastSampleAt;
-      final now = position.timestamp;
-      if (last != null) {
-        final dt = now.difference(last).inMilliseconds / 1000.0;
-        if (dt > 0 && stepMeters > 0) {
-          speedMps = stepMeters / dt;
-        }
-      }
-    }
-    // Ignore obviously-bad values (e.g. > 150 km/h on a bike app).
-    if (speedMps > 42) {
-      speedMps = _recordCurrentSpeedMps;
-    }
-    _recordCurrentSpeedMps = speedMps;
-    if (speedMps > _recordMaxSpeedMps) {
-      _recordMaxSpeedMps = speedMps;
-    }
-    _recordLastSampleAt = position.timestamp;
-  }
-
-  double get _recordAvgSpeedMps {
-    final secs = _recordElapsed.inSeconds;
-    if (secs < 1) {
-      return 0;
-    }
-    return _recordDistanceMeters / secs;
-  }
-
-  String _formatSpeedKmh(double mps) {
-    final kmh = mps * 3.6;
-    if (kmh < 0.1) {
-      return '0';
-    }
-    return kmh.toStringAsFixed(1);
-  }
-
-  String _recordingChipFooterText() {
-    final parts = <String>[_formatDistanceMeters(_recordDistanceMeters)];
-    if (_recordElevationGain >= 1) {
-      parts.add(_formatElevationGainMeters(_recordElevationGain));
-    }
-    final avg = _recordAvgSpeedMps;
-    if (avg > 0.1) {
-      parts.add('avg ${_formatSpeedKmh(avg)}');
-    }
-    if (_recordMaxSpeedMps > 0.1) {
-      parts.add('max ${_formatSpeedKmh(_recordMaxSpeedMps)}');
-    }
-    return parts.join(' · ');
-  }
-
-  /// Smooths GPS altitude (which is noisy) and accumulates positive deltas
-  /// as elevation gain. Skips samples whose `altitudeAccuracy` is worse than
-  /// ~25 m or where altitude is non-finite (e.g. unsupported platform).
-  void _updateRecordedElevation(Position position) {
-    final alt = position.altitude;
-    if (!alt.isFinite) {
-      return;
-    }
-    final accuracy = position.altitudeAccuracy;
-    if (accuracy.isFinite && accuracy > 25) {
-      return;
-    }
-    const alpha = 0.4;
-    final prev = _recordSmoothedAltitude;
-    final smoothed = prev == null ? alt : prev + alpha * (alt - prev);
-    if (prev != null) {
-      final delta = smoothed - prev;
-      // 1 m noise floor on the smoothed signal so small wiggles don't pile up.
-      if (delta >= 1.0) {
-        _recordElevationGain += delta;
-      }
-    }
-    _recordSmoothedAltitude = smoothed;
-  }
-
-  Future<void> _stopRecording() async {
-    if (!_isRecording) {
-      return;
-    }
-    final sub = _recordSubscription;
-    _recordSubscription = null;
-    await sub?.cancel();
-    _recordTickTimer?.cancel();
-    _recordTickTimer = null;
-
-    final startedAt = _recordStartedAt;
-    final endedAt = DateTime.now();
-    final track = List<LatLng>.from(_recordTrack);
-    final distanceMeters = _recordDistanceMeters;
-    final elevationGainMeters = _recordElevationGain;
-    final maxSpeedMps = _recordMaxSpeedMps;
-    final durationSeconds = startedAt == null
-        ? 0
-        : endedAt.difference(startedAt).inSeconds;
-    final avgSpeedMps = durationSeconds > 0
-        ? distanceMeters / durationSeconds
-        : 0.0;
-
-    setState(() {
-      _isRecording = false;
-      _recordStartedAt = null;
-      _recordElapsed = Duration.zero;
-      _recordSmoothedAltitude = null;
-      _recordElevationGain = 0;
-      _recordCurrentSpeedMps = 0;
-      _recordMaxSpeedMps = 0;
-      _recordLastSampleAt = null;
-    });
-
-    if (track.length < 2 || distanceMeters < 5) {
+  Future<void> _saveRecordedRide(RecordingResult stats) async {
+    if (stats.track.length < 2 || stats.distanceMeters < 5) {
       if (!mounted) {
         return;
       }
@@ -906,57 +941,53 @@ class _HomeScreenState extends State<HomeScreen> {
           ),
         ),
       );
-      setState(() {
-        _recordTrack.clear();
-        _recordDistanceMeters = 0;
-      });
       return;
     }
 
-    final defaultName = _defaultRideName(startedAt ?? endedAt);
+    final defaultName = _defaultRideName(stats.startedAt);
     final saved = await _showSaveRideSheet(
       defaultName: defaultName,
-      distanceMeters: distanceMeters,
-      durationSeconds: durationSeconds,
-      elevationGainMeters: elevationGainMeters,
-      avgSpeedMps: avgSpeedMps,
-      maxSpeedMps: maxSpeedMps,
+      distanceMeters: stats.distanceMeters,
+      durationSeconds: stats.durationSeconds,
+      elevationGainMeters: stats.elevationGainMeters,
+      avgSpeedMps: stats.avgSpeedMps,
+      maxSpeedMps: stats.maxSpeedMps,
     );
-
-    if (saved == null) {
-      setState(() {
-        _recordTrack.clear();
-        _recordDistanceMeters = 0;
-      });
+    if (saved == null || !mounted) {
       return;
     }
 
-    _addRide(
-      RideEntry(
-        name: saved.name,
-        notes: saved.notes,
-        createdAt: startedAt ?? endedAt,
-        track: track,
-        distanceMeters: distanceMeters,
-        durationSeconds: durationSeconds,
-        elevationGainMeters: elevationGainMeters > 0
-            ? elevationGainMeters
-            : null,
-        avgSpeedMps: avgSpeedMps > 0 ? avgSpeedMps : null,
-        maxSpeedMps: maxSpeedMps > 0 ? maxSpeedMps : null,
-      ),
+    final entry = RideEntry(
+      name: saved.name,
+      notes: saved.notes,
+      createdAt: stats.startedAt,
+      track: stats.track,
+      distanceMeters: stats.distanceMeters,
+      durationSeconds: stats.durationSeconds,
+      elevationGainMeters: stats.elevationGainMeters > 0
+          ? stats.elevationGainMeters
+          : null,
+      avgSpeedMps: stats.avgSpeedMps > 0 ? stats.avgSpeedMps : null,
+      maxSpeedMps: stats.maxSpeedMps > 0 ? stats.maxSpeedMps : null,
     );
+    _addRide(entry);
 
     setState(() {
-      _recordTrack.clear();
-      _recordDistanceMeters = 0;
       _navIndex = 1;
     });
     if (!mounted) {
       return;
     }
     ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text('Saved "${saved.name}" to Rides')),
+      SnackBar(
+        content: Text('Saved "${saved.name}" to Rides'),
+        action: entry.hasRecordedTrack
+            ? SnackBarAction(
+                label: 'Share',
+                onPressed: () => _openRideShareCard(entry),
+              )
+            : null,
+      ),
     );
   }
 
@@ -966,31 +997,6 @@ class _HomeScreenState extends State<HomeScreen> {
     final hh = t.hour.toString().padLeft(2, '0');
     final mm = t.minute.toString().padLeft(2, '0');
     return 'Ride $m/$d $hh:$mm';
-  }
-
-  String _formatDistanceMeters(double meters) {
-    if (meters >= 1000) {
-      return '${(meters / 1000).toStringAsFixed(2)} km';
-    }
-    return '${meters.toStringAsFixed(0)} m';
-  }
-
-  String _formatDurationSeconds(int seconds) {
-    final h = seconds ~/ 3600;
-    final m = (seconds % 3600) ~/ 60;
-    final s = seconds % 60;
-    String two(int n) => n.toString().padLeft(2, '0');
-    if (h > 0) {
-      return '$h:${two(m)}:${two(s)}';
-    }
-    return '${two(m)}:${two(s)}';
-  }
-
-  String _formatElevationGainMeters(double meters) {
-    if (meters >= 1000) {
-      return '↑${(meters / 1000).toStringAsFixed(2)} km';
-    }
-    return '↑${meters.toStringAsFixed(0)} m';
   }
 
   Future<({String name, String notes})?> _showSaveRideSheet({
@@ -1003,14 +1009,14 @@ class _HomeScreenState extends State<HomeScreen> {
   }) async {
     final nameController = TextEditingController(text: defaultName);
     final notesController = TextEditingController();
-    final distLabel = _formatDistanceMeters(distanceMeters);
+    final distLabel = _formatDistance(distanceMeters, _units);
     final durLabel = _formatDurationSeconds(durationSeconds);
     final showElevation = elevationGainMeters >= 1;
-    final elevLabel = _formatElevationGainMeters(elevationGainMeters);
+    final elevLabel = _formatElevationGain(elevationGainMeters, _units);
     final showAvgSpeed = avgSpeedMps > 0.1;
     final showMaxSpeed = maxSpeedMps > 0.1;
-    final avgLabel = 'Avg ${_formatSpeedKmh(avgSpeedMps)} km/h';
-    final maxLabel = 'Max ${_formatSpeedKmh(maxSpeedMps)} km/h';
+    final avgLabel = 'Avg ${_formatSpeed(avgSpeedMps, _units)}';
+    final maxLabel = 'Max ${_formatSpeed(maxSpeedMps, _units)}';
 
     final result = await showModalBottomSheet<({String name, String notes})>(
       context: context,
@@ -1301,6 +1307,704 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
 
+  void _restoreCachedAchievements(SharedPreferences prefs) {
+    final raw = prefs.getString('achievements_v1');
+    if (raw == null || raw.isEmpty) return;
+    try {
+      final decoded = jsonDecode(raw) as Map<String, dynamic>;
+      _achievementUnlocks = decoded.map(
+        (id, value) => MapEntry(id, DateTime.parse(value as String)),
+      );
+    } catch (_) {
+      _achievementUnlocks = {};
+    }
+  }
+
+  Future<void> _persistAchievements() async {
+    final prefs = await SharedPreferences.getInstance();
+    final encoded = _achievementUnlocks.map(
+      (id, when) => MapEntry(id, when.toIso8601String()),
+    );
+    await prefs.setString('achievements_v1', jsonEncode(encoded));
+  }
+
+  /// Re-evaluate every badge against the current ride list. Anything new
+  /// is recorded with the current timestamp and surfaced via a celebration
+  /// snackbar.
+  void _checkForNewAchievements() {
+    final newlyUnlocked = <Achievement>[];
+    final now = DateTime.now();
+    for (final a in kAchievements) {
+      if (a.isUnlocked(_rides) && !_achievementUnlocks.containsKey(a.id)) {
+        _achievementUnlocks[a.id] = now;
+        newlyUnlocked.add(a);
+      }
+    }
+    if (newlyUnlocked.isNotEmpty) {
+      unawaited(_persistAchievements());
+      _celebrateUnlocks(newlyUnlocked);
+    }
+  }
+
+  void _celebrateUnlocks(List<Achievement> unlocked) {
+    if (!mounted || unlocked.isEmpty) return;
+    final first = unlocked.first;
+    final extra = unlocked.length - 1;
+    final messenger = ScaffoldMessenger.of(context);
+    messenger.hideCurrentSnackBar();
+    messenger.showSnackBar(
+      SnackBar(
+        duration: const Duration(seconds: 6),
+        content: Row(
+          children: [
+            Container(
+              width: 40,
+              height: 40,
+              decoration: BoxDecoration(
+                color: first.color.withValues(alpha: 0.25),
+                borderRadius: BorderRadius.circular(12),
+                border: Border.all(
+                  color: first.color.withValues(alpha: 0.6),
+                ),
+              ),
+              alignment: Alignment.center,
+              child: Icon(first.icon, color: first.color, size: 22),
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    extra == 0
+                        ? 'Achievement unlocked'
+                        : '$extra more unlocked',
+                    style: const TextStyle(
+                      fontSize: 11,
+                      fontWeight: FontWeight.w600,
+                      letterSpacing: 0.6,
+                    ),
+                  ),
+                  Text(
+                    first.title,
+                    style: const TextStyle(
+                      fontWeight: FontWeight.w800,
+                      fontSize: 14,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+        action: SnackBarAction(
+          label: 'View',
+          onPressed: _openAchievementsScreen,
+        ),
+      ),
+    );
+  }
+
+  /// Returns up to [n] achievements ordered by most-recent unlock first.
+  /// Used by the Rides-tab header card to show the latest 3 badges.
+  List<Achievement> _recentlyUnlockedBadges(int n) {
+    final entries = _achievementUnlocks.entries.toList()
+      ..sort((a, b) => b.value.compareTo(a.value));
+    final result = <Achievement>[];
+    for (final e in entries) {
+      final match = kAchievements.firstWhere(
+        (a) => a.id == e.key,
+        orElse: () => kAchievements.first,
+      );
+      if (match.id != e.key) continue;
+      result.add(match);
+      if (result.length >= n) break;
+    }
+    return result;
+  }
+
+  void _openAchievementsScreen() {
+    Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        builder: (_) => _AchievementsScreen(
+          rides: _rides,
+          unlocks: Map.of(_achievementUnlocks),
+        ),
+      ),
+    );
+  }
+
+  /// Open the shareable summary card for a recorded ride. Auto-fills the
+  /// achievements row with whatever the ride has unlocked overall (best
+  /// effort: we don't yet diff per-ride, so we show every current unlock
+  /// the ride contributes to).
+  void _openRideShareCard(RideEntry ride) {
+    final relevantAchievements = kAchievements
+        .where((a) => _achievementUnlocks.containsKey(a.id))
+        .toList();
+    Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        builder: (_) => _RideShareScreen(
+          ride: ride,
+          units: _units,
+          unlockedAchievements: relevantAchievements,
+        ),
+      ),
+    );
+  }
+
+  /// The effective lat/lon used for weather lookups: the user's pinned
+  /// location if set, otherwise the current map center.
+  LatLng get _effectiveWeatherLatLng {
+    final pin = _pinnedWeatherLocation;
+    return pin != null ? LatLng(pin.latitude, pin.longitude) : _mapCenter;
+  }
+
+  /// Open-Meteo gives current conditions + a 3-day daily forecast for the
+  /// active weather location (pinned city OR map center). Stored in
+  /// metric and converted at render time. We cache the latest response so
+  /// the chip shows instantly on next launch.
+  Future<void> _loadWeather({bool force = false}) async {
+    if (_isLoadingWeather) {
+      return;
+    }
+    final center = _effectiveWeatherLatLng;
+    final pinName = _pinnedWeatherLocation?.shortName;
+    final existing = _weather;
+    if (!force && existing != null) {
+      final age = DateTime.now().difference(existing.fetchedAt);
+      final dKm = _distance.as(
+        LengthUnit.Kilometer,
+        LatLng(existing.latitude, existing.longitude),
+        center,
+      );
+      final sameLabel = existing.placeName == pinName;
+      if (age < const Duration(minutes: 30) && dKm < 5 && sameLabel) {
+        return;
+      }
+    }
+
+    setState(() {
+      _isLoadingWeather = true;
+    });
+
+    final lat = center.latitude.toStringAsFixed(4);
+    final lon = center.longitude.toStringAsFixed(4);
+    final uri = Uri.parse(
+      'https://api.open-meteo.com/v1/forecast'
+      '?latitude=$lat&longitude=$lon'
+      '&current=temperature_2m,relative_humidity_2m,apparent_temperature,'
+      'is_day,precipitation,weather_code,wind_speed_10m,wind_direction_10m'
+      '&daily=weather_code,temperature_2m_max,temperature_2m_min,'
+      'precipitation_sum,wind_speed_10m_max'
+      '&timezone=auto&forecast_days=3',
+    );
+
+    try {
+      final response = await http
+          .get(uri)
+          .timeout(const Duration(seconds: 8));
+      if (response.statusCode != 200) {
+        throw Exception('HTTP ${response.statusCode}');
+      }
+      final body = jsonDecode(response.body) as Map<String, dynamic>;
+      final current = body['current'] as Map<String, dynamic>;
+      final daily = body['daily'] as Map<String, dynamic>;
+
+      final snapshot = WeatherSnapshot(
+        tempC: (current['temperature_2m'] as num).toDouble(),
+        feelsLikeC: (current['apparent_temperature'] as num).toDouble(),
+        weatherCode: (current['weather_code'] as num).toInt(),
+        isDay: ((current['is_day'] as num).toInt()) == 1,
+        windSpeedKmh: (current['wind_speed_10m'] as num).toDouble(),
+        windDirectionDeg: (current['wind_direction_10m'] as num).toDouble(),
+        humidityPct: (current['relative_humidity_2m'] as num).toInt(),
+        precipitationMm: (current['precipitation'] as num).toDouble(),
+        latitude: center.latitude,
+        longitude: center.longitude,
+        fetchedAt: DateTime.now(),
+        placeName: pinName,
+      );
+
+      final times = (daily['time'] as List).cast<String>();
+      final codes = (daily['weather_code'] as List).cast<num>();
+      final tmax = (daily['temperature_2m_max'] as List).cast<num>();
+      final tmin = (daily['temperature_2m_min'] as List).cast<num>();
+      final precip = (daily['precipitation_sum'] as List).cast<num>();
+      final wind = (daily['wind_speed_10m_max'] as List).cast<num>();
+
+      final forecast = <WeatherDayForecast>[];
+      for (var i = 0; i < times.length; i++) {
+        forecast.add(
+          WeatherDayForecast(
+            date: DateTime.parse(times[i]),
+            weatherCode: codes[i].toInt(),
+            tempMaxC: tmax[i].toDouble(),
+            tempMinC: tmin[i].toDouble(),
+            precipitationMm: precip[i].toDouble(),
+            windMaxKmh: wind[i].toDouble(),
+          ),
+        );
+      }
+
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _weather = snapshot;
+        _forecast = forecast;
+        _isLoadingWeather = false;
+      });
+      unawaited(_persistWeather());
+    } catch (_) {
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _isLoadingWeather = false;
+      });
+    }
+  }
+
+  Future<void> _persistWeather() async {
+    final prefs = await SharedPreferences.getInstance();
+    final w = _weather;
+    if (w == null) {
+      await prefs.remove('weather_v1');
+      await prefs.remove('forecast_v1');
+      return;
+    }
+    await prefs.setString('weather_v1', jsonEncode(w.toJson()));
+    await prefs.setString(
+      'forecast_v1',
+      jsonEncode(_forecast.map((d) => d.toJson()).toList()),
+    );
+  }
+
+  Future<void> _persistPinnedWeatherLocation() async {
+    final prefs = await SharedPreferences.getInstance();
+    final pin = _pinnedWeatherLocation;
+    if (pin == null) {
+      await prefs.remove('weather_location_v1');
+    } else {
+      await prefs.setString(
+        'weather_location_v1',
+        jsonEncode(pin.toJson()),
+      );
+    }
+  }
+
+  void _restoreCachedWeather(SharedPreferences prefs) {
+    final pinRaw = prefs.getString('weather_location_v1');
+    if (pinRaw != null && pinRaw.isNotEmpty) {
+      try {
+        _pinnedWeatherLocation = WeatherLocation.fromJson(
+          jsonDecode(pinRaw) as Map<String, dynamic>,
+        );
+      } catch (_) {
+        _pinnedWeatherLocation = null;
+      }
+    }
+
+    final wRaw = prefs.getString('weather_v1');
+    if (wRaw == null || wRaw.isEmpty) {
+      return;
+    }
+    try {
+      _weather = WeatherSnapshot.fromJson(
+        jsonDecode(wRaw) as Map<String, dynamic>,
+      );
+      final fRaw = prefs.getString('forecast_v1');
+      if (fRaw != null && fRaw.isNotEmpty) {
+        final list = jsonDecode(fRaw) as List<dynamic>;
+        _forecast = list
+            .map(
+              (e) => WeatherDayForecast.fromJson(e as Map<String, dynamic>),
+            )
+            .toList();
+      }
+    } catch (_) {
+      _weather = null;
+      _forecast = [];
+    }
+  }
+
+  /// Switch to a different weather location (or pass `null` to go back to
+  /// "follow map"). Persists the choice and immediately refetches.
+  Future<void> _setWeatherLocation(WeatherLocation? location) async {
+    setState(() {
+      _pinnedWeatherLocation = location;
+    });
+    await _persistPinnedWeatherLocation();
+    await _loadWeather(force: true);
+  }
+
+  /// Snap the weather location to the device's current GPS coordinates.
+  /// Requests permission with graceful failure (snackbar on error).
+  Future<void> _useGpsForWeatherLocation() async {
+    try {
+      var permission = await Geolocator.checkPermission();
+      if (permission == LocationPermission.denied) {
+        permission = await Geolocator.requestPermission();
+      }
+      if (permission == LocationPermission.denied ||
+          permission == LocationPermission.deniedForever) {
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Location permission denied'),
+          ),
+        );
+        return;
+      }
+      final position = await Geolocator.getCurrentPosition().timeout(
+        const Duration(seconds: 8),
+      );
+      await _setWeatherLocation(
+        WeatherLocation(
+          name: 'My location',
+          latitude: position.latitude,
+          longitude: position.longitude,
+        ),
+      );
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Could not get GPS: $e')),
+      );
+    }
+  }
+
+  /// Calls Open-Meteo's geocoding API for autocomplete results. Returns
+  /// up to 8 matches; empty list on any failure so the UI can render an
+  /// empty state without surfacing errors.
+  Future<List<WeatherLocation>> _searchWeatherPlaces(String query) async {
+    if (query.trim().isEmpty) return const [];
+    final uri = Uri.parse(
+      'https://geocoding-api.open-meteo.com/v1/search'
+      '?name=${Uri.encodeQueryComponent(query.trim())}'
+      '&count=8&language=en&format=json',
+    );
+    try {
+      final response = await http.get(uri).timeout(
+        const Duration(seconds: 6),
+      );
+      if (response.statusCode != 200) return const [];
+      final body = jsonDecode(response.body) as Map<String, dynamic>;
+      final results = body['results'] as List<dynamic>?;
+      if (results == null) return const [];
+      return results.map((r) {
+        final m = r as Map<String, dynamic>;
+        return WeatherLocation(
+          name: (m['name'] as String?) ?? 'Unknown',
+          latitude: (m['latitude'] as num).toDouble(),
+          longitude: (m['longitude'] as num).toDouble(),
+          country: m['country'] as String?,
+          admin: m['admin1'] as String?,
+        );
+      }).toList();
+    } catch (_) {
+      return const [];
+    }
+  }
+
+  /// Opens the location picker (search / GPS / follow-map). Reopens the
+  /// weather sheet afterward so the user sees the updated conditions.
+  void _showWeatherLocationPicker() {
+    showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (sheetContext) {
+        return _WeatherLocationPickerSheet(
+          currentPin: _pinnedWeatherLocation,
+          onSearch: _searchWeatherPlaces,
+          onPick: (loc) async {
+            await _setWeatherLocation(loc);
+            if (!mounted) return;
+            _showWeatherSheet();
+          },
+          onUseGps: () async {
+            await _useGpsForWeatherLocation();
+            if (!mounted) return;
+            _showWeatherSheet();
+          },
+          onFollowMap: () async {
+            await _setWeatherLocation(null);
+            if (!mounted) return;
+            _showWeatherSheet();
+          },
+        );
+      },
+    );
+  }
+
+  /// Detailed weather panel: hero card with current conditions + a row of
+  /// upcoming days. Includes a pull-to-refresh equivalent (manual button).
+  void _showWeatherSheet() {
+    final snapshot = _weather;
+    if (snapshot == null) {
+      return;
+    }
+    showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (sheetContext) {
+        final scheme = Theme.of(sheetContext).colorScheme;
+        final isDark = Theme.of(sheetContext).brightness == Brightness.dark;
+        final gradient = weatherGradientFor(
+          snapshot.weatherCode,
+          isDay: snapshot.isDay,
+        );
+        final icon = weatherIconFor(
+          snapshot.weatherCode,
+          isDay: snapshot.isDay,
+        );
+        final label = weatherLabelFor(snapshot.weatherCode);
+        final mediaPadding = MediaQuery.of(sheetContext).padding.bottom;
+
+        return SafeArea(
+          top: false,
+          child: Container(
+            margin: const EdgeInsets.fromLTRB(12, 0, 12, 12),
+            decoration: BoxDecoration(
+              color: scheme.surface,
+              borderRadius: BorderRadius.circular(28),
+              boxShadow: [
+                BoxShadow(
+                  color: Colors.black.withValues(alpha: isDark ? 0.5 : 0.18),
+                  blurRadius: 30,
+                  offset: const Offset(0, 12),
+                ),
+              ],
+            ),
+            child: ClipRRect(
+              borderRadius: BorderRadius.circular(28),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Container(
+                    width: double.infinity,
+                    padding: const EdgeInsets.fromLTRB(20, 18, 20, 22),
+                    decoration: BoxDecoration(
+                      gradient: LinearGradient(
+                        begin: Alignment.topLeft,
+                        end: Alignment.bottomRight,
+                        colors: gradient,
+                      ),
+                    ),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Row(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          children: [
+                            Container(
+                              width: 36,
+                              height: 4,
+                              decoration: BoxDecoration(
+                                color: Colors.white.withValues(alpha: 0.5),
+                                borderRadius: BorderRadius.circular(2),
+                              ),
+                            ),
+                          ],
+                        ),
+                        const SizedBox(height: 12),
+                        Material(
+                          color: Colors.white.withValues(alpha: 0.16),
+                          borderRadius: BorderRadius.circular(14),
+                          child: InkWell(
+                            borderRadius: BorderRadius.circular(14),
+                            onTap: () {
+                              Navigator.of(sheetContext).pop();
+                              _showWeatherLocationPicker();
+                            },
+                            child: Padding(
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 12,
+                                vertical: 8,
+                              ),
+                              child: Row(
+                                children: [
+                                  const Icon(
+                                    Icons.place,
+                                    color: Colors.white,
+                                    size: 16,
+                                  ),
+                                  const SizedBox(width: 6),
+                                  Expanded(
+                                    child: Text(
+                                      snapshot.placeName ?? 'Map view',
+                                      maxLines: 1,
+                                      overflow: TextOverflow.ellipsis,
+                                      style: const TextStyle(
+                                        color: Colors.white,
+                                        fontWeight: FontWeight.w700,
+                                        fontSize: 13,
+                                      ),
+                                    ),
+                                  ),
+                                  const Icon(
+                                    Icons.edit_outlined,
+                                    color: Colors.white,
+                                    size: 16,
+                                  ),
+                                ],
+                              ),
+                            ),
+                          ),
+                        ),
+                        const SizedBox(height: 14),
+                        Row(
+                          crossAxisAlignment: CrossAxisAlignment.center,
+                          children: [
+                            Icon(icon, color: Colors.white, size: 56),
+                            const SizedBox(width: 14),
+                            Expanded(
+                              child: Column(
+                                crossAxisAlignment:
+                                    CrossAxisAlignment.start,
+                                children: [
+                                  Text(
+                                    _formatTemperature(
+                                      snapshot.tempC,
+                                      _units,
+                                    ),
+                                    style: const TextStyle(
+                                      color: Colors.white,
+                                      fontSize: 44,
+                                      fontWeight: FontWeight.w800,
+                                      height: 1.0,
+                                      letterSpacing: -1.2,
+                                    ),
+                                  ),
+                                  const SizedBox(height: 4),
+                                  Text(
+                                    label,
+                                    style: TextStyle(
+                                      color: Colors.white.withValues(
+                                        alpha: 0.95,
+                                      ),
+                                      fontSize: 14,
+                                      fontWeight: FontWeight.w600,
+                                      letterSpacing: 0.4,
+                                    ),
+                                  ),
+                                  Text(
+                                    'Feels like '
+                                    '${_formatTemperature(snapshot.feelsLikeC, _units)}',
+                                    style: TextStyle(
+                                      color: Colors.white.withValues(
+                                        alpha: 0.85,
+                                      ),
+                                      fontSize: 12,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                            IconButton(
+                              tooltip: 'Refresh',
+                              icon: const Icon(
+                                Icons.refresh,
+                                color: Colors.white,
+                              ),
+                              onPressed: _isLoadingWeather
+                                  ? null
+                                  : () async {
+                                      await _loadWeather(force: true);
+                                    },
+                            ),
+                          ],
+                        ),
+                        const SizedBox(height: 14),
+                        Row(
+                          children: [
+                            _WeatherStat(
+                              icon: Icons.air,
+                              label: 'Wind',
+                              value: _formatWind(
+                                snapshot.windSpeedKmh,
+                                _units,
+                              ),
+                            ),
+                            _WeatherStat(
+                              icon: Icons.water_drop_outlined,
+                              label: 'Humidity',
+                              value: '${snapshot.humidityPct}%',
+                            ),
+                            _WeatherStat(
+                              icon: Icons.umbrella_outlined,
+                              label: 'Precip',
+                              value:
+                                  '${snapshot.precipitationMm.toStringAsFixed(1)} mm',
+                            ),
+                          ],
+                        ),
+                      ],
+                    ),
+                  ),
+                  if (_forecast.isNotEmpty)
+                    Padding(
+                      padding: EdgeInsets.fromLTRB(
+                        16,
+                        16,
+                        16,
+                        16 + mediaPadding,
+                      ),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            'NEXT ${_forecast.length} DAYS',
+                            style: TextStyle(
+                              fontSize: 11,
+                              fontWeight: FontWeight.w800,
+                              letterSpacing: 1.4,
+                              color: scheme.onSurfaceVariant,
+                            ),
+                          ),
+                          const SizedBox(height: 10),
+                          Row(
+                            children: [
+                              for (final day in _forecast)
+                                Expanded(
+                                  child: Padding(
+                                    padding: EdgeInsets.only(
+                                      right: day == _forecast.last ? 0 : 8,
+                                    ),
+                                    child: _ForecastDayCard(
+                                      day: day,
+                                      units: _units,
+                                    ),
+                                  ),
+                                ),
+                            ],
+                          ),
+                          const SizedBox(height: 12),
+                          Text(
+                            'Updated '
+                            '${_formatRelativeTime(snapshot.fetchedAt)} · '
+                            'Open-Meteo',
+                            style: TextStyle(
+                              fontSize: 10,
+                              color: scheme.onSurfaceVariant,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                ],
+              ),
+            ),
+          ),
+        );
+      },
+    );
+  }
+
   Future<void> _loadTrails() async {
     setState(() {
       _isLoadingTrails = true;
@@ -1361,6 +2065,8 @@ out geom;
         });
       }
     }
+
+    unawaited(_loadWeather());
   }
 
   Future<List<TrailData>> _loadFromOverpass(String query) async {
@@ -1584,18 +2290,6 @@ out geom;
                   ),
                 ],
               ),
-            if (_recordTrack.length >= 2)
-              PolylineLayer(
-                polylines: [
-                  Polyline(
-                    points: _recordTrack,
-                    color: Colors.redAccent,
-                    strokeWidth: 4.5,
-                    borderStrokeWidth: 2,
-                    borderColor: Colors.white,
-                  ),
-                ],
-              ),
             MarkerLayer(
               markers: [
                 Marker(
@@ -1644,13 +2338,6 @@ out geom;
                     ),
                   ),
                 ],
-                if (_recordTrack.isNotEmpty)
-                  Marker(
-                    point: _recordTrack.last,
-                    width: 18,
-                    height: 18,
-                    child: const _RecordingPulseDot(),
-                  ),
               ],
             ),
             RichAttributionWidget(
@@ -1738,6 +2425,15 @@ out geom;
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.end,
             children: [
+              if (_weather != null) ...[
+                _WeatherChip(
+                  snapshot: _weather!,
+                  units: _units,
+                  isLoading: _isLoadingWeather,
+                  onTap: _showWeatherSheet,
+                ),
+                const SizedBox(height: 8),
+              ],
               Card(
                 color: Colors.white.withAlpha(230),
                 child: Padding(
@@ -2039,98 +2735,70 @@ out geom;
           ),
         ),
         Positioned(
-          right: 12,
-          bottom: 12,
-          child: _isRecording
-              ? Material(
-                  elevation: 6,
-                  borderRadius: BorderRadius.circular(28),
-                  color: Theme.of(context).colorScheme.surface,
-                  child: Padding(
-                    padding: const EdgeInsets.fromLTRB(12, 8, 8, 8),
-                    child: Row(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        const _RecordingPulseDot(),
-                        const SizedBox(width: 10),
-                        Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            Row(
-                              mainAxisSize: MainAxisSize.min,
-                              crossAxisAlignment: CrossAxisAlignment.baseline,
-                              textBaseline: TextBaseline.alphabetic,
-                              children: [
-                                Text(
-                                  _formatDurationSeconds(
-                                    _recordElapsed.inSeconds,
-                                  ),
-                                  style: const TextStyle(
-                                    fontFeatures: [
-                                      FontFeature.tabularFigures(),
-                                    ],
-                                    fontWeight: FontWeight.w700,
-                                    fontSize: 15,
-                                  ),
-                                ),
-                                const SizedBox(width: 8),
-                                Text(
-                                  '${_formatSpeedKmh(_recordCurrentSpeedMps)} km/h',
-                                  style: const TextStyle(
-                                    fontFeatures: [
-                                      FontFeature.tabularFigures(),
-                                    ],
-                                    fontWeight: FontWeight.w600,
-                                    fontSize: 13,
-                                  ),
-                                ),
-                              ],
-                            ),
-                            Text(
-                              _recordingChipFooterText(),
-                              style: const TextStyle(fontSize: 11),
-                            ),
-                          ],
-                        ),
-                        const SizedBox(width: 10),
-                        FilledButton.icon(
-                          onPressed: _stopRecording,
-                          style: FilledButton.styleFrom(
-                            backgroundColor: Colors.redAccent,
-                            foregroundColor: Colors.white,
-                            padding: const EdgeInsets.symmetric(
-                              horizontal: 12,
-                              vertical: 8,
-                            ),
-                          ),
-                          icon: const Icon(Icons.stop, size: 16),
-                          label: const Text('Stop'),
-                        ),
-                      ],
-                    ),
-                  ),
-                )
-              : Material(
-                  elevation: 6,
-                  shape: const CircleBorder(),
-                  color: Colors.redAccent,
-                  child: InkWell(
-                    customBorder: const CircleBorder(),
-                    onTap: _startRecording,
-                    child: const Padding(
-                      padding: EdgeInsets.all(14),
-                      child: Tooltip(
-                        message: 'Record a ride',
-                        child: Icon(
-                          Icons.fiber_manual_record,
-                          color: Colors.white,
-                          size: 22,
-                        ),
+          right: 16,
+          bottom: 16,
+          child: _PressEffect(
+            onTap: _openRecordingScreen,
+            shape: BoxShape.circle,
+            boxShadow: [
+              BoxShadow(
+                color: const Color(0xFFFF1744).withValues(alpha: 0.55),
+                blurRadius: 22,
+                spreadRadius: 1,
+                offset: const Offset(0, 8),
+              ),
+              BoxShadow(
+                color: Colors.black.withValues(alpha: 0.25),
+                blurRadius: 10,
+                offset: const Offset(0, 4),
+              ),
+            ],
+            pressedShadow: [
+              BoxShadow(
+                color: const Color(0xFFFF1744).withValues(alpha: 0.35),
+                blurRadius: 10,
+                spreadRadius: 0,
+                offset: const Offset(0, 2),
+              ),
+            ],
+            child: Container(
+              width: 68,
+              height: 68,
+              decoration: const BoxDecoration(
+                shape: BoxShape.circle,
+                gradient: LinearGradient(
+                  begin: Alignment.topLeft,
+                  end: Alignment.bottomRight,
+                  colors: [Color(0xFFFF5252), Color(0xFFB71C1C)],
+                ),
+              ),
+              child: Center(
+                child: Container(
+                  width: 32,
+                  height: 32,
+                  decoration: BoxDecoration(
+                    shape: BoxShape.circle,
+                    color: Colors.white.withValues(alpha: 0.95),
+                    boxShadow: [
+                      BoxShadow(
+                        color: Colors.black.withValues(alpha: 0.25),
+                        blurRadius: 4,
+                        offset: const Offset(0, 2),
                       ),
+                    ],
+                  ),
+                  child: const Tooltip(
+                    message: 'Record a ride',
+                    child: Icon(
+                      Icons.fiber_manual_record,
+                      color: Color(0xFFD50000),
+                      size: 22,
                     ),
                   ),
                 ),
+              ),
+            ),
+          ),
         ),
       ],
     );
@@ -2165,6 +2833,13 @@ out geom;
             icon: const Icon(Icons.add),
             label: const Text('Add ride'),
           ),
+          const SizedBox(height: 12),
+          _AchievementsHeaderCard(
+            unlockedCount: _achievementUnlocks.length,
+            totalCount: kAchievements.length,
+            recentUnlocks: _recentlyUnlockedBadges(3),
+            onTap: _openAchievementsScreen,
+          ),
           const SizedBox(height: 16),
           Expanded(
             child: _rides.isEmpty
@@ -2179,59 +2854,19 @@ out geom;
                   )
                 : ListView.separated(
                     itemCount: _rides.length,
-                    separatorBuilder: (_, _) => const Divider(height: 1),
+                    separatorBuilder: (_, _) => const SizedBox(height: 10),
                     itemBuilder: (context, index) {
                       final ride = _rides[index];
-                      final stats = <String>[];
-                      final distLabel = ride.distanceLabel();
-                      final durLabel = ride.durationLabel();
-                      final elevLabel = ride.elevationGainLabel();
-                      final avgLabel = ride.avgSpeedLabel();
-                      if (distLabel != null) stats.add(distLabel);
-                      if (durLabel != null) stats.add(durLabel);
-                      if (elevLabel != null) stats.add(elevLabel);
-                      if (avgLabel != null) stats.add(avgLabel);
-                      stats.add(ride.createdLabel());
-                      final statsLine = stats.join(' · ');
-                      final subtitleText = ride.notes.isEmpty
-                          ? statsLine
-                          : '${ride.notes}\n$statsLine';
-                      return ListTile(
-                        contentPadding: const EdgeInsets.symmetric(
-                          vertical: 4,
-                          horizontal: 4,
-                        ),
-                        leading: CircleAvatar(
-                          backgroundColor: ride.hasRecordedTrack
-                              ? Colors.redAccent.withValues(alpha: 0.15)
-                              : Theme.of(
-                                  context,
-                                ).colorScheme.primaryContainer,
-                          child: Icon(
-                            ride.hasRecordedTrack
-                                ? Icons.route
-                                : Icons.directions_bike,
-                            color: ride.hasRecordedTrack
-                                ? Colors.redAccent
-                                : Theme.of(
-                                    context,
-                                  ).colorScheme.onPrimaryContainer,
-                          ),
-                        ),
-                        title: Text(ride.name),
-                        subtitle: Text(
-                          subtitleText,
-                          maxLines: 4,
-                          overflow: TextOverflow.ellipsis,
-                        ),
-                        trailing: IconButton(
-                          icon: const Icon(Icons.delete_outline),
-                          tooltip: 'Remove ride',
-                          onPressed: () => _removeRideAt(index),
-                        ),
+                      return _RideCard(
+                        ride: ride,
+                        units: _units,
                         onTap: ride.hasRecordedTrack
                             ? () => _focusRecordedRideOnMap(ride)
                             : null,
+                        onShare: ride.hasRecordedTrack
+                            ? () => _openRideShareCard(ride)
+                            : null,
+                        onDelete: () => _removeRideAt(index),
                       );
                     },
                   ),
@@ -2273,6 +2908,70 @@ out geom;
         FilledButton(
           onPressed: _saveRiderProfile,
           child: const Text('Save rider profile'),
+        ),
+        const SizedBox(height: 32),
+        Text('Units', style: theme.textTheme.titleLarge),
+        const SizedBox(height: 8),
+        Text(
+          'Distances, elevation and speeds use these units everywhere.',
+          style: theme.textTheme.bodySmall,
+        ),
+        const SizedBox(height: 12),
+        SegmentedButton<UnitSystem>(
+          segments: const [
+            ButtonSegment<UnitSystem>(
+              value: UnitSystem.metric,
+              label: Text('kph'),
+            ),
+            ButtonSegment<UnitSystem>(
+              value: UnitSystem.imperial,
+              label: Text('mph'),
+            ),
+          ],
+          selected: {_units},
+          onSelectionChanged: (selection) {
+            if (selection.isNotEmpty) {
+              _setUnits(selection.first);
+            }
+          },
+        ),
+        const SizedBox(height: 32),
+        Text('Appearance', style: theme.textTheme.titleLarge),
+        const SizedBox(height: 8),
+        Text(
+          'Auto follows your system light/dark setting.',
+          style: theme.textTheme.bodySmall,
+        ),
+        const SizedBox(height: 12),
+        Builder(
+          builder: (context) {
+            final mode = MyApp.of(context)?.themeMode ?? ThemeMode.system;
+            return SegmentedButton<ThemeMode>(
+              segments: const [
+                ButtonSegment<ThemeMode>(
+                  value: ThemeMode.light,
+                  icon: Icon(Icons.light_mode_outlined),
+                  label: Text('Light'),
+                ),
+                ButtonSegment<ThemeMode>(
+                  value: ThemeMode.system,
+                  icon: Icon(Icons.brightness_auto_outlined),
+                  label: Text('Auto'),
+                ),
+                ButtonSegment<ThemeMode>(
+                  value: ThemeMode.dark,
+                  icon: Icon(Icons.dark_mode_outlined),
+                  label: Text('Dark'),
+                ),
+              ],
+              selected: {mode},
+              onSelectionChanged: (selection) {
+                if (selection.isNotEmpty) {
+                  MyApp.of(context)?.setThemeMode(selection.first);
+                }
+              },
+            );
+          },
         ),
         const SizedBox(height: 32),
         Text('About', style: theme.textTheme.titleLarge),
@@ -2734,6 +3433,91 @@ Widget _trailDifficultyLegendSwatch(int tier) {
   );
 }
 
+enum UnitSystem {
+  metric,
+  imperial;
+
+  static UnitSystem fromName(String? name) {
+    if (name == 'imperial') return UnitSystem.imperial;
+    return UnitSystem.metric;
+  }
+
+  String get persistName => this == UnitSystem.imperial ? 'imperial' : 'metric';
+}
+
+String _formatDurationSeconds(int seconds) {
+  final h = seconds ~/ 3600;
+  final m = (seconds % 3600) ~/ 60;
+  final s = seconds % 60;
+  String two(int n) => n.toString().padLeft(2, '0');
+  if (h > 0) {
+    return '$h:${two(m)}:${two(s)}';
+  }
+  return '${two(m)}:${two(s)}';
+}
+
+/// "1.23 km" / "455 m" for metric; "0.76 mi" / "1494 ft" for imperial.
+String _formatDistance(double meters, UnitSystem u) {
+  if (u == UnitSystem.imperial) {
+    final feet = meters * 3.28084;
+    if (feet < 1000) {
+      return '${feet.toStringAsFixed(0)} ft';
+    }
+    final miles = meters / 1609.344;
+    return '${miles.toStringAsFixed(2)} mi';
+  }
+  if (meters >= 1000) {
+    return '${(meters / 1000).toStringAsFixed(2)} km';
+  }
+  return '${meters.toStringAsFixed(0)} m';
+}
+
+/// Just the elevation magnitude with unit, no arrow: "45 m" / "148 ft".
+String _formatElevationValue(double meters, UnitSystem u) {
+  if (u == UnitSystem.imperial) {
+    final feet = meters * 3.28084;
+    return '${feet.toStringAsFixed(0)} ft';
+  }
+  if (meters >= 1000) {
+    return '${(meters / 1000).toStringAsFixed(2)} km';
+  }
+  return '${meters.toStringAsFixed(0)} m';
+}
+
+/// Elevation gain prefixed with an up-arrow: "↑45 m" / "↑148 ft".
+String _formatElevationGain(double meters, UnitSystem u) =>
+    '↑${_formatElevationValue(meters, u)}';
+
+String _speedUnitLabel(UnitSystem u) =>
+    u == UnitSystem.imperial ? 'mph' : 'km/h';
+
+/// Just the number, no unit: "12.3". Returns "0" when speed is essentially zero.
+String _formatSpeedValue(double mps, UnitSystem u) {
+  final v = u == UnitSystem.imperial ? mps * 2.23694 : mps * 3.6;
+  if (v < 0.1) {
+    return '0';
+  }
+  return v.toStringAsFixed(1);
+}
+
+/// "12.3 km/h" / "12.3 mph".
+String _formatSpeed(double mps, UnitSystem u) =>
+    '${_formatSpeedValue(mps, u)} ${_speedUnitLabel(u)}';
+
+/// Open-Meteo data is always Celsius; convert + format for the active unit.
+String _formatTemperature(double celsius, UnitSystem u) {
+  final v = u == UnitSystem.imperial
+      ? (celsius * 9 / 5) + 32
+      : celsius;
+  return '${v.round()}°${u == UnitSystem.imperial ? 'F' : 'C'}';
+}
+
+/// Wind in km/h → "12 mph" or "12 km/h".
+String _formatWind(double kmh, UnitSystem u) {
+  final v = u == UnitSystem.imperial ? kmh * 0.621371 : kmh;
+  return '${v.round()} ${u == UnitSystem.imperial ? 'mph' : 'km/h'}';
+}
+
 class RideEntry {
   RideEntry({
     required this.name,
@@ -2766,15 +3550,12 @@ class RideEntry {
     return '${d.year}-$m-$day';
   }
 
-  String? distanceLabel() {
+  String? distanceLabel(UnitSystem units) {
     final m = distanceMeters;
     if (m == null) {
       return null;
     }
-    if (m >= 1000) {
-      return '${(m / 1000).toStringAsFixed(2)} km';
-    }
-    return '${m.toStringAsFixed(0)} m';
+    return _formatDistance(m, units);
   }
 
   String? durationLabel() {
@@ -2782,41 +3563,31 @@ class RideEntry {
     if (s == null) {
       return null;
     }
-    final h = s ~/ 3600;
-    final m = (s % 3600) ~/ 60;
-    final sec = s % 60;
-    String two(int n) => n.toString().padLeft(2, '0');
-    if (h > 0) {
-      return '$h:${two(m)}:${two(sec)}';
-    }
-    return '${two(m)}:${two(sec)}';
+    return _formatDurationSeconds(s);
   }
 
-  String? elevationGainLabel() {
+  String? elevationGainLabel(UnitSystem units) {
     final g = elevationGainMeters;
     if (g == null || g < 1) {
       return null;
     }
-    if (g >= 1000) {
-      return '↑${(g / 1000).toStringAsFixed(2)} km';
-    }
-    return '↑${g.toStringAsFixed(0)} m';
+    return _formatElevationGain(g, units);
   }
 
-  String? avgSpeedLabel() {
+  String? avgSpeedLabel(UnitSystem units) {
     final s = avgSpeedMps;
     if (s == null || s <= 0.1) {
       return null;
     }
-    return 'avg ${(s * 3.6).toStringAsFixed(1)} km/h';
+    return 'avg ${_formatSpeed(s, units)}';
   }
 
-  String? maxSpeedLabel() {
+  String? maxSpeedLabel(UnitSystem units) {
     final s = maxSpeedMps;
     if (s == null || s <= 0.1) {
       return null;
     }
-    return 'max ${(s * 3.6).toStringAsFixed(1)} km/h';
+    return 'max ${_formatSpeed(s, units)}';
   }
 
   Map<String, dynamic> toJson() => {
@@ -2896,6 +3667,730 @@ class TrailData {
   final double lengthKm;
 }
 
+/// A user-pickable location for weather lookups. Can come from the
+/// Open-Meteo geocoding API (search), the device's GPS (auto), or be
+/// `null` (let the weather follow the map center). Persisted as
+/// `weather_location_v1`.
+class WeatherLocation {
+  const WeatherLocation({
+    required this.name,
+    required this.latitude,
+    required this.longitude,
+    this.country,
+    this.admin,
+  });
+
+  final String name;
+  final double latitude;
+  final double longitude;
+  final String? country;
+  final String? admin;
+
+  /// Pretty "Mountain View, California, United States" string for headers.
+  /// Falls back gracefully if admin/country are missing.
+  String get displayName {
+    final parts = <String>[
+      name,
+      if (admin != null && admin!.isNotEmpty) admin!,
+      if (country != null && country!.isNotEmpty) country!,
+    ];
+    return parts.join(', ');
+  }
+
+  /// Shorter "Mountain View, CA" / "Mountain View, US" for the chip / sheet
+  /// header where space is tight.
+  String get shortName {
+    final region = admin ?? country;
+    if (region == null || region.isEmpty) return name;
+    return '$name, $region';
+  }
+
+  Map<String, dynamic> toJson() => {
+    'name': name,
+    'latitude': latitude,
+    'longitude': longitude,
+    'country': country,
+    'admin': admin,
+  };
+
+  static WeatherLocation fromJson(Map<String, dynamic> json) =>
+      WeatherLocation(
+        name: json['name'] as String,
+        latitude: (json['latitude'] as num).toDouble(),
+        longitude: (json['longitude'] as num).toDouble(),
+        country: json['country'] as String?,
+        admin: json['admin'] as String?,
+      );
+}
+
+/// Live conditions reported by Open-Meteo. All values stored in metric
+/// (Celsius / km·h). The UI converts to imperial at render time based on
+/// the user's `UnitSystem` preference.
+class WeatherSnapshot {
+  const WeatherSnapshot({
+    required this.tempC,
+    required this.feelsLikeC,
+    required this.weatherCode,
+    required this.isDay,
+    required this.windSpeedKmh,
+    required this.windDirectionDeg,
+    required this.humidityPct,
+    required this.precipitationMm,
+    required this.latitude,
+    required this.longitude,
+    required this.fetchedAt,
+    this.placeName,
+  });
+
+  final double tempC;
+  final double feelsLikeC;
+  final int weatherCode;
+  final bool isDay;
+  final double windSpeedKmh;
+  final double windDirectionDeg;
+  final int humidityPct;
+  final double precipitationMm;
+  final double latitude;
+  final double longitude;
+  final DateTime fetchedAt;
+
+  /// Friendly label for the location these readings represent. `null`
+  /// means "following the map" and the UI shows "Map view" instead.
+  final String? placeName;
+
+  Map<String, dynamic> toJson() => {
+    'tempC': tempC,
+    'feelsLikeC': feelsLikeC,
+    'weatherCode': weatherCode,
+    'isDay': isDay,
+    'windSpeedKmh': windSpeedKmh,
+    'windDirectionDeg': windDirectionDeg,
+    'humidityPct': humidityPct,
+    'precipitationMm': precipitationMm,
+    'latitude': latitude,
+    'longitude': longitude,
+    'fetchedAt': fetchedAt.toIso8601String(),
+    'placeName': placeName,
+  };
+
+  static WeatherSnapshot fromJson(Map<String, dynamic> json) {
+    return WeatherSnapshot(
+      tempC: (json['tempC'] as num).toDouble(),
+      feelsLikeC: (json['feelsLikeC'] as num).toDouble(),
+      weatherCode: (json['weatherCode'] as num).toInt(),
+      isDay: json['isDay'] as bool,
+      windSpeedKmh: (json['windSpeedKmh'] as num).toDouble(),
+      windDirectionDeg: (json['windDirectionDeg'] as num).toDouble(),
+      humidityPct: (json['humidityPct'] as num).toInt(),
+      precipitationMm: (json['precipitationMm'] as num).toDouble(),
+      latitude: (json['latitude'] as num).toDouble(),
+      longitude: (json['longitude'] as num).toDouble(),
+      fetchedAt: DateTime.parse(json['fetchedAt'] as String),
+      placeName: json['placeName'] as String?,
+    );
+  }
+}
+
+class WeatherDayForecast {
+  const WeatherDayForecast({
+    required this.date,
+    required this.weatherCode,
+    required this.tempMaxC,
+    required this.tempMinC,
+    required this.precipitationMm,
+    required this.windMaxKmh,
+  });
+
+  final DateTime date;
+  final int weatherCode;
+  final double tempMaxC;
+  final double tempMinC;
+  final double precipitationMm;
+  final double windMaxKmh;
+
+  Map<String, dynamic> toJson() => {
+    'date': date.toIso8601String(),
+    'weatherCode': weatherCode,
+    'tempMaxC': tempMaxC,
+    'tempMinC': tempMinC,
+    'precipitationMm': precipitationMm,
+    'windMaxKmh': windMaxKmh,
+  };
+
+  static WeatherDayForecast fromJson(Map<String, dynamic> json) {
+    return WeatherDayForecast(
+      date: DateTime.parse(json['date'] as String),
+      weatherCode: (json['weatherCode'] as num).toInt(),
+      tempMaxC: (json['tempMaxC'] as num).toDouble(),
+      tempMinC: (json['tempMinC'] as num).toDouble(),
+      precipitationMm: (json['precipitationMm'] as num).toDouble(),
+      windMaxKmh: (json['windMaxKmh'] as num).toDouble(),
+    );
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Achievements
+// ---------------------------------------------------------------------------
+
+enum AchievementCategory {
+  rides('Milestones'),
+  distance('Distance'),
+  elevation('Elevation'),
+  speed('Speed'),
+  time('Endurance'),
+  habits('Habits');
+
+  const AchievementCategory(this.label);
+  final String label;
+}
+
+/// Current progress toward an [Achievement]. `current >= target` ⇒ unlocked.
+class AchievementProgress {
+  const AchievementProgress(this.current, this.target);
+  final double current;
+  final double target;
+  bool get isUnlocked => current >= target;
+  double get percent =>
+      target > 0 ? (current / target).clamp(0.0, 1.0) : 0;
+}
+
+/// One unlockable badge. Stored declaratively; the unlock check is a pure
+/// function of the ride history so we can re-evaluate at any time.
+class Achievement {
+  const Achievement({
+    required this.id,
+    required this.title,
+    required this.description,
+    required this.icon,
+    required this.color,
+    required this.category,
+    required this.target,
+    required this.unit,
+    required this.progress,
+  });
+
+  final String id;
+  final String title;
+  final String description;
+  final IconData icon;
+  final Color color;
+  final AchievementCategory category;
+  final double target;
+  final String unit;
+  final AchievementProgress Function(List<RideEntry> rides) progress;
+
+  bool isUnlocked(List<RideEntry> rides) => progress(rides).isUnlocked;
+}
+
+// ---- Aggregate helpers used by the catalog -------------------------------
+
+double _totalRideDistanceKm(List<RideEntry> rides) {
+  var total = 0.0;
+  for (final r in rides) {
+    final m = r.distanceMeters;
+    if (m != null) total += m / 1000;
+  }
+  return total;
+}
+
+double _totalRideElevationM(List<RideEntry> rides) {
+  var total = 0.0;
+  for (final r in rides) {
+    final m = r.elevationGainMeters;
+    if (m != null) total += m;
+  }
+  return total;
+}
+
+double _maxSingleRideKm(List<RideEntry> rides) {
+  var best = 0.0;
+  for (final r in rides) {
+    final m = r.distanceMeters;
+    if (m == null) continue;
+    final km = m / 1000;
+    if (km > best) best = km;
+  }
+  return best;
+}
+
+double _maxSingleRideElevationM(List<RideEntry> rides) {
+  var best = 0.0;
+  for (final r in rides) {
+    final m = r.elevationGainMeters;
+    if (m != null && m > best) best = m;
+  }
+  return best;
+}
+
+double _maxSingleRideSeconds(List<RideEntry> rides) {
+  var best = 0.0;
+  for (final r in rides) {
+    final s = r.durationSeconds;
+    if (s == null) continue;
+    final sd = s.toDouble();
+    if (sd > best) best = sd;
+  }
+  return best;
+}
+
+double _maxTopSpeedKmh(List<RideEntry> rides) {
+  var best = 0.0;
+  for (final r in rides) {
+    final mps = r.maxSpeedMps;
+    if (mps == null) continue;
+    final kmh = mps * 3.6;
+    if (kmh > best) best = kmh;
+  }
+  return best;
+}
+
+double _habitProgress(
+  List<RideEntry> rides,
+  bool Function(RideEntry ride) test,
+) {
+  return rides.any(test) ? 1 : 0;
+}
+
+/// The full catalog of badges. Add new ones here — they'll automatically
+/// surface in the Achievements screen and the celebration snackbar.
+final List<Achievement> kAchievements = [
+  // Ride count milestones
+  Achievement(
+    id: 'first_pedal',
+    title: 'First Pedal',
+    description: 'Save your first ride',
+    icon: Icons.directions_bike,
+    color: const Color(0xFF66BB6A),
+    category: AchievementCategory.rides,
+    target: 1,
+    unit: 'ride',
+    progress: (r) => AchievementProgress(r.length.toDouble(), 1),
+  ),
+  Achievement(
+    id: 'trail_blazer',
+    title: 'Trail Blazer',
+    description: 'Save 5 rides',
+    icon: Icons.terrain,
+    color: const Color(0xFF26A69A),
+    category: AchievementCategory.rides,
+    target: 5,
+    unit: 'rides',
+    progress: (r) => AchievementProgress(r.length.toDouble(), 5),
+  ),
+  Achievement(
+    id: 'veteran',
+    title: 'Veteran',
+    description: 'Save 25 rides',
+    icon: Icons.local_fire_department,
+    color: const Color(0xFFEF5350),
+    category: AchievementCategory.rides,
+    target: 25,
+    unit: 'rides',
+    progress: (r) => AchievementProgress(r.length.toDouble(), 25),
+  ),
+  Achievement(
+    id: 'centurion',
+    title: 'Centurion',
+    description: 'Save 100 rides',
+    icon: Icons.emoji_events,
+    color: const Color(0xFFFFA726),
+    category: AchievementCategory.rides,
+    target: 100,
+    unit: 'rides',
+    progress: (r) => AchievementProgress(r.length.toDouble(), 100),
+  ),
+
+  // Cumulative distance
+  Achievement(
+    id: 'ten_km_club',
+    title: '10 km Club',
+    description: 'Ride 10 km in total',
+    icon: Icons.straighten,
+    color: const Color(0xFF42A5F5),
+    category: AchievementCategory.distance,
+    target: 10,
+    unit: 'km',
+    progress: (r) => AchievementProgress(_totalRideDistanceKm(r), 10),
+  ),
+  Achievement(
+    id: 'fifty_km_club',
+    title: '50 km Club',
+    description: 'Ride 50 km in total',
+    icon: Icons.straighten,
+    color: const Color(0xFF5C6BC0),
+    category: AchievementCategory.distance,
+    target: 50,
+    unit: 'km',
+    progress: (r) => AchievementProgress(_totalRideDistanceKm(r), 50),
+  ),
+  Achievement(
+    id: 'hundred_km_club',
+    title: '100 km Club',
+    description: 'Ride 100 km in total',
+    icon: Icons.bolt,
+    color: const Color(0xFF7E57C2),
+    category: AchievementCategory.distance,
+    target: 100,
+    unit: 'km',
+    progress: (r) => AchievementProgress(_totalRideDistanceKm(r), 100),
+  ),
+  Achievement(
+    id: 'five_hundred_club',
+    title: '500 km Club',
+    description: 'Ride 500 km in total',
+    icon: Icons.flag,
+    color: const Color(0xFFEC407A),
+    category: AchievementCategory.distance,
+    target: 500,
+    unit: 'km',
+    progress: (r) => AchievementProgress(_totalRideDistanceKm(r), 500),
+  ),
+
+  // Cumulative elevation
+  Achievement(
+    id: 'hill_climber',
+    title: 'Hill Climber',
+    description: 'Climb 1,000 m in total',
+    icon: Icons.terrain,
+    color: const Color(0xFF8D6E63),
+    category: AchievementCategory.elevation,
+    target: 1000,
+    unit: 'm',
+    progress: (r) => AchievementProgress(_totalRideElevationM(r), 1000),
+  ),
+  Achievement(
+    id: 'mountain_goat',
+    title: 'Mountain Goat',
+    description: 'Climb 5,000 m in total',
+    icon: Icons.landscape,
+    color: const Color(0xFF78909C),
+    category: AchievementCategory.elevation,
+    target: 5000,
+    unit: 'm',
+    progress: (r) => AchievementProgress(_totalRideElevationM(r), 5000),
+  ),
+  Achievement(
+    id: 'sky_climber',
+    title: 'Sky Climber',
+    description: "Climb 10,000 m total — that's an Everest!",
+    icon: Icons.flight_takeoff,
+    color: const Color(0xFF26C6DA),
+    category: AchievementCategory.elevation,
+    target: 10000,
+    unit: 'm',
+    progress: (r) => AchievementProgress(_totalRideElevationM(r), 10000),
+  ),
+
+  // Single ride distance
+  Achievement(
+    id: 'long_hauler',
+    title: 'Long Hauler',
+    description: 'Ride 25 km in a single trip',
+    icon: Icons.timeline,
+    color: const Color(0xFF29B6F6),
+    category: AchievementCategory.distance,
+    target: 25,
+    unit: 'km',
+    progress: (r) => AchievementProgress(_maxSingleRideKm(r), 25),
+  ),
+  Achievement(
+    id: 'marathon',
+    title: 'Marathon',
+    description: 'Ride 50 km in a single trip',
+    icon: Icons.celebration,
+    color: const Color(0xFFD81B60),
+    category: AchievementCategory.distance,
+    target: 50,
+    unit: 'km',
+    progress: (r) => AchievementProgress(_maxSingleRideKm(r), 50),
+  ),
+
+  // Speed
+  Achievement(
+    id: 'speedster',
+    title: 'Speedster',
+    description: 'Hit 30 km/h on a ride',
+    icon: Icons.speed,
+    color: const Color(0xFFFFCA28),
+    category: AchievementCategory.speed,
+    target: 30,
+    unit: 'km/h',
+    progress: (r) => AchievementProgress(_maxTopSpeedKmh(r), 30),
+  ),
+  Achievement(
+    id: 'lightning',
+    title: 'Lightning',
+    description: 'Hit 50 km/h on a ride',
+    icon: Icons.bolt,
+    color: const Color(0xFFFFEE58),
+    category: AchievementCategory.speed,
+    target: 50,
+    unit: 'km/h',
+    progress: (r) => AchievementProgress(_maxTopSpeedKmh(r), 50),
+  ),
+
+  // Single ride elevation
+  Achievement(
+    id: 'summit',
+    title: 'Summit',
+    description: 'Climb 500 m in one ride',
+    icon: Icons.filter_hdr,
+    color: const Color(0xFF66BB6A),
+    category: AchievementCategory.elevation,
+    target: 500,
+    unit: 'm',
+    progress: (r) => AchievementProgress(_maxSingleRideElevationM(r), 500),
+  ),
+  Achievement(
+    id: 'everest_step',
+    title: 'Everest Step',
+    description: 'Climb 1,000 m in one ride',
+    icon: Icons.height,
+    color: const Color(0xFF26A69A),
+    category: AchievementCategory.elevation,
+    target: 1000,
+    unit: 'm',
+    progress: (r) => AchievementProgress(_maxSingleRideElevationM(r), 1000),
+  ),
+
+  // Time
+  Achievement(
+    id: 'endurance',
+    title: 'Endurance',
+    description: 'Ride for 2+ hours straight',
+    icon: Icons.timer,
+    color: const Color(0xFFFF7043),
+    category: AchievementCategory.time,
+    target: 7200,
+    unit: 'sec',
+    progress: (r) => AchievementProgress(_maxSingleRideSeconds(r), 7200),
+  ),
+  Achievement(
+    id: 'all_day_epic',
+    title: 'All-Day Epic',
+    description: 'Ride for 5+ hours straight',
+    icon: Icons.alarm,
+    color: const Color(0xFFE53935),
+    category: AchievementCategory.time,
+    target: 18000,
+    unit: 'sec',
+    progress: (r) => AchievementProgress(_maxSingleRideSeconds(r), 18000),
+  ),
+
+  // Habits
+  Achievement(
+    id: 'early_bird',
+    title: 'Early Bird',
+    description: 'Start a ride before 7 AM',
+    icon: Icons.wb_sunny,
+    color: const Color(0xFFFFB300),
+    category: AchievementCategory.habits,
+    target: 1,
+    unit: 'ride',
+    progress: (r) => AchievementProgress(
+      _habitProgress(r, (ride) => ride.createdAt.hour < 7),
+      1,
+    ),
+  ),
+  Achievement(
+    id: 'night_owl',
+    title: 'Night Owl',
+    description: 'Start a ride after 8 PM',
+    icon: Icons.nightlight_round,
+    color: const Color(0xFF5E35B1),
+    category: AchievementCategory.habits,
+    target: 1,
+    unit: 'ride',
+    progress: (r) => AchievementProgress(
+      _habitProgress(r, (ride) => ride.createdAt.hour >= 20),
+      1,
+    ),
+  ),
+  Achievement(
+    id: 'weekend_warrior',
+    title: 'Weekend Warrior',
+    description: 'Ride on a Saturday or Sunday',
+    icon: Icons.weekend,
+    color: const Color(0xFF1E88E5),
+    category: AchievementCategory.habits,
+    target: 1,
+    unit: 'ride',
+    progress: (r) => AchievementProgress(
+      _habitProgress(
+        r,
+        (ride) => ride.createdAt.weekday >= DateTime.saturday,
+      ),
+      1,
+    ),
+  ),
+];
+
+/// Format the "current / target" line that shows under each badge.
+String formatAchievementProgress(Achievement a, AchievementProgress p) {
+  if (p.isUnlocked) return 'Unlocked';
+  switch (a.unit) {
+    case 'sec':
+      return '${_formatDurationSeconds(p.current.round())} / '
+          '${_formatDurationSeconds(p.target.round())}';
+    case 'km':
+    case 'km/h':
+    case 'm':
+      return '${p.current.toStringAsFixed(p.current < 10 ? 1 : 0)} / '
+          '${p.target.toStringAsFixed(0)} ${a.unit}';
+    default:
+      return '${p.current.round()} / ${p.target.round()} ${a.unit}';
+  }
+}
+
+/// Maps a WMO weather code (Open-Meteo's `weathercode`) to a Material icon.
+/// `isDay` swaps sun for moon on clear/partly-cloudy.
+IconData weatherIconFor(int code, {bool isDay = true}) {
+  switch (code) {
+    case 0:
+      return isDay ? Icons.wb_sunny_rounded : Icons.nightlight_round;
+    case 1:
+    case 2:
+      return isDay ? Icons.wb_cloudy_outlined : Icons.nights_stay_outlined;
+    case 3:
+      return Icons.cloud_rounded;
+    case 45:
+    case 48:
+      return Icons.foggy;
+    case 51:
+    case 53:
+    case 55:
+    case 56:
+    case 57:
+      return Icons.grain;
+    case 61:
+    case 63:
+    case 65:
+    case 66:
+    case 67:
+      return Icons.water_drop_rounded;
+    case 71:
+    case 73:
+    case 75:
+    case 77:
+    case 85:
+    case 86:
+      return Icons.ac_unit_rounded;
+    case 80:
+    case 81:
+    case 82:
+      return Icons.umbrella_rounded;
+    case 95:
+    case 96:
+    case 99:
+      return Icons.thunderstorm_rounded;
+    default:
+      return Icons.cloud_outlined;
+  }
+}
+
+String weatherLabelFor(int code) {
+  switch (code) {
+    case 0:
+      return 'Clear';
+    case 1:
+      return 'Mostly clear';
+    case 2:
+      return 'Partly cloudy';
+    case 3:
+      return 'Overcast';
+    case 45:
+    case 48:
+      return 'Foggy';
+    case 51:
+    case 53:
+    case 55:
+      return 'Drizzle';
+    case 56:
+    case 57:
+      return 'Freezing drizzle';
+    case 61:
+      return 'Light rain';
+    case 63:
+      return 'Rain';
+    case 65:
+      return 'Heavy rain';
+    case 66:
+    case 67:
+      return 'Freezing rain';
+    case 71:
+      return 'Light snow';
+    case 73:
+      return 'Snow';
+    case 75:
+      return 'Heavy snow';
+    case 77:
+      return 'Snow grains';
+    case 80:
+      return 'Light showers';
+    case 81:
+      return 'Showers';
+    case 82:
+      return 'Heavy showers';
+    case 85:
+    case 86:
+      return 'Snow showers';
+    case 95:
+      return 'Thunderstorm';
+    case 96:
+    case 99:
+      return 'Storm + hail';
+    default:
+      return 'Cloudy';
+  }
+}
+
+/// Two-stop gradient that tints the weather chip background to match the
+/// conditions: sunny = warm, cloudy = cool gray, rain = deep blue, etc.
+List<Color> weatherGradientFor(int code, {required bool isDay}) {
+  if (!isDay && (code == 0 || code == 1 || code == 2)) {
+    return const [Color(0xFF1A237E), Color(0xFF000051)];
+  }
+  switch (code) {
+    case 0:
+    case 1:
+      return const [Color(0xFFFFB74D), Color(0xFFEF6C00)];
+    case 2:
+    case 3:
+      return const [Color(0xFF64B5F6), Color(0xFF1976D2)];
+    case 45:
+    case 48:
+      return const [Color(0xFF90A4AE), Color(0xFF455A64)];
+    case 51:
+    case 53:
+    case 55:
+    case 56:
+    case 57:
+    case 61:
+    case 63:
+    case 65:
+    case 66:
+    case 67:
+    case 80:
+    case 81:
+    case 82:
+      return const [Color(0xFF4FC3F7), Color(0xFF01579B)];
+    case 71:
+    case 73:
+    case 75:
+    case 77:
+    case 85:
+    case 86:
+      return const [Color(0xFFE1F5FE), Color(0xFF81D4FA)];
+    case 95:
+    case 96:
+    case 99:
+      return const [Color(0xFF4527A0), Color(0xFF1A237E)];
+    default:
+      return const [Color(0xFF78909C), Color(0xFF37474F)];
+  }
+}
+
 /// Pulsing red dot used to mark the live recording location and the
 /// recording-status chip.
 class _RecordingPulseDot extends StatefulWidget {
@@ -2950,6 +4445,2723 @@ class _RecordingPulseDotState extends State<_RecordingPulseDot>
           ),
         );
       },
+    );
+  }
+}
+
+/// Result handed back from [_RecordingScreen] to the home screen when the
+/// user stops a ride.
+typedef RecordingResult = ({
+  DateTime startedAt,
+  DateTime endedAt,
+  List<LatLng> track,
+  double distanceMeters,
+  int durationSeconds,
+  double elevationGainMeters,
+  double avgSpeedMps,
+  double maxSpeedMps,
+});
+
+class _RecordingStartResult {
+  const _RecordingStartResult.ok() : ok = true, errorMessage = null;
+  const _RecordingStartResult.error(this.errorMessage) : ok = false;
+  final bool ok;
+  final String? errorMessage;
+}
+
+/// Owns live GPS recording: position stream, distance accumulation,
+/// elevation smoothing, and speed tracking. Notifies listeners on every
+/// accepted sample and on every 1-second tick.
+class _RecordingSession extends ChangeNotifier {
+  static const Distance _distance = Distance();
+
+  bool _isRecording = false;
+  final List<LatLng> _track = [];
+  DateTime? _startedAt;
+  Duration _elapsed = Duration.zero;
+  double _distanceMeters = 0;
+  double _currentSpeedMps = 0;
+  double _maxSpeedMps = 0;
+  double _elevationGain = 0;
+  double? _smoothedAltitude;
+  DateTime? _lastSampleAt;
+  StreamSubscription<Position>? _subscription;
+  Timer? _tickTimer;
+
+  bool get isRecording => _isRecording;
+  List<LatLng> get track => List.unmodifiable(_track);
+  DateTime? get startedAt => _startedAt;
+  Duration get elapsed => _elapsed;
+  double get distanceMeters => _distanceMeters;
+  double get currentSpeedMps => _currentSpeedMps;
+  double get maxSpeedMps => _maxSpeedMps;
+  double get elevationGain => _elevationGain;
+
+  double get avgSpeedMps {
+    final secs = _elapsed.inSeconds;
+    if (secs < 1) {
+      return 0;
+    }
+    return _distanceMeters / secs;
+  }
+
+  Future<_RecordingStartResult> start() async {
+    if (_isRecording) {
+      return const _RecordingStartResult.ok();
+    }
+    try {
+      final servicesOn = await Geolocator.isLocationServiceEnabled();
+      if (!servicesOn) {
+        return const _RecordingStartResult.error(
+          'Location services are off. Enable them in System Settings → '
+          'Privacy & Security → Location Services.',
+        );
+      }
+      var permission = await Geolocator.checkPermission();
+      if (permission == LocationPermission.denied) {
+        permission = await Geolocator.requestPermission();
+      }
+      if (permission == LocationPermission.denied ||
+          permission == LocationPermission.deniedForever) {
+        return const _RecordingStartResult.error(
+          'Location permission denied. Allow it in System Settings to '
+          'record rides.',
+        );
+      }
+    } catch (e) {
+      return _RecordingStartResult.error('Could not access location: $e');
+    }
+
+    _isRecording = true;
+    _track.clear();
+    _distanceMeters = 0;
+    _startedAt = DateTime.now();
+    _elapsed = Duration.zero;
+    _smoothedAltitude = null;
+    _elevationGain = 0;
+    _currentSpeedMps = 0;
+    _maxSpeedMps = 0;
+    _lastSampleAt = null;
+    notifyListeners();
+
+    const settings = LocationSettings(
+      accuracy: LocationAccuracy.bestForNavigation,
+      distanceFilter: 5,
+    );
+    _subscription = Geolocator.getPositionStream(locationSettings: settings)
+        .listen(_handlePosition, onError: (_) {});
+    _tickTimer = Timer.periodic(const Duration(seconds: 1), (_) {
+      final start = _startedAt;
+      if (start == null) {
+        return;
+      }
+      _elapsed = DateTime.now().difference(start);
+      notifyListeners();
+    });
+    return const _RecordingStartResult.ok();
+  }
+
+  void _handlePosition(Position position) {
+    if (!_isRecording) {
+      return;
+    }
+    final p = LatLng(position.latitude, position.longitude);
+    double stepMeters = 0;
+    if (_track.isNotEmpty) {
+      stepMeters = _distance.as(LengthUnit.Meter, _track.last, p);
+      // Filter obvious GPS jitter (sub-3m steps) and teleports (>150m jumps).
+      if (stepMeters < 3 || stepMeters > 150) {
+        return;
+      }
+      _distanceMeters += stepMeters;
+    }
+    _updateElevation(position);
+    _updateSpeed(position, stepMeters);
+    _track.add(p);
+    notifyListeners();
+  }
+
+  void _updateElevation(Position position) {
+    final alt = position.altitude;
+    if (!alt.isFinite) {
+      return;
+    }
+    final accuracy = position.altitudeAccuracy;
+    if (accuracy.isFinite && accuracy > 25) {
+      return;
+    }
+    const alpha = 0.4;
+    final prev = _smoothedAltitude;
+    final smoothed = prev == null ? alt : prev + alpha * (alt - prev);
+    if (prev != null) {
+      final delta = smoothed - prev;
+      if (delta >= 1.0) {
+        _elevationGain += delta;
+      }
+    }
+    _smoothedAltitude = smoothed;
+  }
+
+  void _updateSpeed(Position position, double stepMeters) {
+    double speedMps = 0;
+    if (position.speed.isFinite && position.speed >= 0) {
+      speedMps = position.speed;
+    } else {
+      final last = _lastSampleAt;
+      final now = position.timestamp;
+      if (last != null) {
+        final dt = now.difference(last).inMilliseconds / 1000.0;
+        if (dt > 0 && stepMeters > 0) {
+          speedMps = stepMeters / dt;
+        }
+      }
+    }
+    if (speedMps > 42) {
+      speedMps = _currentSpeedMps;
+    }
+    _currentSpeedMps = speedMps;
+    if (speedMps > _maxSpeedMps) {
+      _maxSpeedMps = speedMps;
+    }
+    _lastSampleAt = position.timestamp;
+  }
+
+  /// Stops recording and returns the captured stats. Returns `null` if
+  /// recording wasn't running.
+  RecordingResult? stop() {
+    if (!_isRecording) {
+      return null;
+    }
+    _subscription?.cancel();
+    _subscription = null;
+    _tickTimer?.cancel();
+    _tickTimer = null;
+
+    final startedAt = _startedAt ?? DateTime.now();
+    final endedAt = DateTime.now();
+    final track = List<LatLng>.from(_track);
+    final distanceMeters = _distanceMeters;
+    final elevationGainMeters = _elevationGain;
+    final maxSpeedMps = _maxSpeedMps;
+    final durationSeconds = endedAt.difference(startedAt).inSeconds;
+    final avgSpeedMps = durationSeconds > 0
+        ? distanceMeters / durationSeconds
+        : 0.0;
+
+    _isRecording = false;
+    _track.clear();
+    _distanceMeters = 0;
+    _startedAt = null;
+    _elapsed = Duration.zero;
+    _smoothedAltitude = null;
+    _elevationGain = 0;
+    _currentSpeedMps = 0;
+    _maxSpeedMps = 0;
+    _lastSampleAt = null;
+    notifyListeners();
+
+    return (
+      startedAt: startedAt,
+      endedAt: endedAt,
+      track: track,
+      distanceMeters: distanceMeters,
+      durationSeconds: durationSeconds,
+      elevationGainMeters: elevationGainMeters,
+      avgSpeedMps: avgSpeedMps,
+      maxSpeedMps: maxSpeedMps,
+    );
+  }
+
+  @override
+  void dispose() {
+    _subscription?.cancel();
+    _tickTimer?.cancel();
+    super.dispose();
+  }
+}
+
+/// Full-screen route shown while a ride is being recorded. Owns the
+/// session lifecycle (starts on init, stops via the Stop button or via
+/// a confirm-discard flow from the close button).
+class _RecordingScreen extends StatefulWidget {
+  const _RecordingScreen({
+    required this.session,
+    required this.initialCenter,
+    required this.initialZoom,
+    required this.units,
+  });
+
+  final _RecordingSession session;
+  final LatLng initialCenter;
+  final double initialZoom;
+  final UnitSystem units;
+
+  @override
+  State<_RecordingScreen> createState() => _RecordingScreenState();
+}
+
+class _RecordingScreenState extends State<_RecordingScreen> {
+  final MapController _miniMapController = MapController();
+  bool _autoFollow = true;
+  String? _startError;
+  bool _startAttempted = false;
+
+  @override
+  void initState() {
+    super.initState();
+    widget.session.addListener(_onChange);
+    WidgetsBinding.instance.addPostFrameCallback((_) async {
+      _startAttempted = true;
+      final result = await widget.session.start();
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _startError = result.ok ? null : result.errorMessage;
+      });
+    });
+  }
+
+  void _onChange() {
+    if (!mounted) {
+      return;
+    }
+    setState(() {});
+    if (_autoFollow && widget.session.track.isNotEmpty) {
+      _miniMapController.move(
+        widget.session.track.last,
+        _miniMapController.camera.zoom,
+      );
+    }
+  }
+
+  @override
+  void dispose() {
+    widget.session.removeListener(_onChange);
+    super.dispose();
+  }
+
+  Future<bool> _confirmDiscard() async {
+    final discard = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('Discard this ride?'),
+        content: const Text(
+          "You'll lose the recorded track and stats. There's no undo.",
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(dialogContext).pop(false),
+            child: const Text('Keep recording'),
+          ),
+          FilledButton(
+            style: FilledButton.styleFrom(
+              backgroundColor: Theme.of(dialogContext).colorScheme.error,
+              foregroundColor: Theme.of(dialogContext).colorScheme.onError,
+            ),
+            onPressed: () => Navigator.of(dialogContext).pop(true),
+            child: const Text('Discard'),
+          ),
+        ],
+      ),
+    );
+    return discard ?? false;
+  }
+
+  Future<void> _onClosePressed() async {
+    if (!widget.session.isRecording) {
+      Navigator.of(context).pop();
+      return;
+    }
+    final ok = await _confirmDiscard();
+    if (!ok || !mounted) {
+      return;
+    }
+    widget.session.stop();
+    if (!mounted) {
+      return;
+    }
+    Navigator.of(context).pop();
+  }
+
+  void _onStopPressed() {
+    final stats = widget.session.stop();
+    Navigator.of(context).pop(stats);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final session = widget.session;
+    final theme = Theme.of(context);
+
+    return PopScope(
+      canPop: !session.isRecording,
+      onPopInvokedWithResult: (didPop, _) async {
+        if (didPop) {
+          return;
+        }
+        await _onClosePressed();
+      },
+      child: Scaffold(
+        appBar: AppBar(
+          leading: IconButton(
+            icon: const Icon(Icons.close),
+            tooltip: 'Discard and close',
+            onPressed: _onClosePressed,
+          ),
+          title: const Text('Recording ride'),
+        ),
+        body: _startError != null
+            ? Padding(
+                padding: const EdgeInsets.all(24),
+                child: Center(
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      const Icon(Icons.location_off, size: 56),
+                      const SizedBox(height: 12),
+                      Text(
+                        _startError!,
+                        textAlign: TextAlign.center,
+                        style: theme.textTheme.bodyLarge,
+                      ),
+                      const SizedBox(height: 24),
+                      FilledButton(
+                        onPressed: () => Navigator.of(context).pop(),
+                        child: const Text('Back'),
+                      ),
+                    ],
+                  ),
+                ),
+              )
+            : !_startAttempted || (!session.isRecording && _startAttempted)
+            ? const Center(child: CircularProgressIndicator())
+            : Column(
+                children: [
+                  Padding(
+                    padding: const EdgeInsets.fromLTRB(20, 16, 20, 0),
+                    child: Row(
+                      children: [
+                        const _RecordingPulseDot(),
+                        const SizedBox(width: 10),
+                        Text(
+                          'RECORDING',
+                          style: TextStyle(
+                            color: Colors.redAccent,
+                            fontWeight: FontWeight.w800,
+                            letterSpacing: 1.6,
+                            fontSize: 12,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  Padding(
+                    padding: const EdgeInsets.fromLTRB(20, 4, 20, 8),
+                    child: Text(
+                      _formatDurationSeconds(session.elapsed.inSeconds),
+                      style: TextStyle(
+                        fontFeatures: const [FontFeature.tabularFigures()],
+                        fontWeight: FontWeight.w800,
+                        fontSize: 64,
+                        color: theme.colorScheme.onSurface,
+                        height: 1.0,
+                        letterSpacing: -2,
+                      ),
+                    ),
+                  ),
+                  Padding(
+                    padding: const EdgeInsets.fromLTRB(16, 0, 16, 10),
+                    child: _GlowStatCard(
+                      child: Padding(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 8,
+                          vertical: 16,
+                        ),
+                        child: Row(
+                          children: [
+                            Expanded(
+                              child: _BigStat(
+                                value: _formatDistance(
+                                  session.distanceMeters,
+                                  widget.units,
+                                ),
+                                label: 'DISTANCE',
+                              ),
+                            ),
+                            const _VerticalStatDivider(),
+                            Expanded(
+                              child: _BigStat(
+                                value: session.elevationGain >= 1
+                                    ? _formatElevationValue(
+                                        session.elevationGain,
+                                        widget.units,
+                                      )
+                                    : (widget.units == UnitSystem.imperial
+                                          ? '0 ft'
+                                          : '0 m'),
+                                label: 'ELEV ↑',
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                  ),
+                  Padding(
+                    padding: const EdgeInsets.fromLTRB(16, 0, 16, 10),
+                    child: _GlowStatCard(
+                      child: Padding(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 4,
+                          vertical: 16,
+                        ),
+                        child: Row(
+                          children: [
+                            Expanded(
+                              child: _BigStat(
+                                value: _formatSpeedValue(
+                                  session.currentSpeedMps,
+                                  widget.units,
+                                ),
+                                label: 'NOW ${_speedUnitLabel(widget.units)}',
+                              ),
+                            ),
+                            const _VerticalStatDivider(),
+                            Expanded(
+                              child: _BigStat(
+                                value: _formatSpeedValue(
+                                  session.avgSpeedMps,
+                                  widget.units,
+                                ),
+                                label: 'AVG ${_speedUnitLabel(widget.units)}',
+                              ),
+                            ),
+                            const _VerticalStatDivider(),
+                            Expanded(
+                              child: _BigStat(
+                                value: _formatSpeedValue(
+                                  session.maxSpeedMps,
+                                  widget.units,
+                                ),
+                                label: 'MAX ${_speedUnitLabel(widget.units)}',
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                  ),
+                  Expanded(
+                    child: Padding(
+                      padding: const EdgeInsets.fromLTRB(16, 4, 16, 8),
+                      child: ClipRRect(
+                        borderRadius: BorderRadius.circular(24),
+                        child: Stack(
+                          children: [
+                            FlutterMap(
+                              mapController: _miniMapController,
+                              options: MapOptions(
+                                initialCenter: widget.initialCenter,
+                                initialZoom: widget.initialZoom,
+                                interactionOptions: const InteractionOptions(
+                                  flags: InteractiveFlag.all,
+                                ),
+                                onPositionChanged: (_, hasGesture) {
+                                  if (hasGesture && _autoFollow) {
+                                    setState(() => _autoFollow = false);
+                                  }
+                                },
+                              ),
+                              children: [
+                                TileLayer(
+                                  urlTemplate:
+                                      'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
+                                  userAgentPackageName:
+                                      'com.example.wildhorizon',
+                                ),
+                                if (session.track.length >= 2)
+                                  PolylineLayer(
+                                    polylines: [
+                                      Polyline(
+                                        points: session.track,
+                                        color: Colors.redAccent,
+                                        strokeWidth: 5,
+                                        borderStrokeWidth: 2,
+                                        borderColor: Colors.white,
+                                      ),
+                                    ],
+                                  ),
+                                if (session.track.isNotEmpty)
+                                  MarkerLayer(
+                                    markers: [
+                                      Marker(
+                                        point: session.track.last,
+                                        width: 20,
+                                        height: 20,
+                                        child: const _RecordingPulseDot(),
+                                      ),
+                                    ],
+                                  ),
+                              ],
+                            ),
+                            if (!_autoFollow)
+                              Positioned(
+                                right: 8,
+                                bottom: 8,
+                                child: FloatingActionButton.small(
+                                  heroTag: 'follow-me-fab',
+                                  onPressed: () {
+                                    setState(() => _autoFollow = true);
+                                    if (session.track.isNotEmpty) {
+                                      _miniMapController.move(
+                                        session.track.last,
+                                        _miniMapController.camera.zoom,
+                                      );
+                                    }
+                                  },
+                                  tooltip: 'Follow me',
+                                  child: const Icon(Icons.my_location),
+                                ),
+                              ),
+                          ],
+                        ),
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+        bottomNavigationBar: (_startError != null || !session.isRecording)
+            ? null
+            : SafeArea(
+                child: Padding(
+                  padding: const EdgeInsets.fromLTRB(16, 4, 16, 14),
+                  child: _PressEffect(
+                    onTap: _onStopPressed,
+                    borderRadius: BorderRadius.circular(30),
+                    boxShadow: [
+                      BoxShadow(
+                        color: const Color(0xFFFF1744).withValues(alpha: 0.45),
+                        blurRadius: 22,
+                        spreadRadius: 1,
+                        offset: const Offset(0, 10),
+                      ),
+                      BoxShadow(
+                        color: Colors.black.withValues(alpha: 0.2),
+                        blurRadius: 8,
+                        offset: const Offset(0, 4),
+                      ),
+                    ],
+                    pressedShadow: [
+                      BoxShadow(
+                        color: const Color(0xFFFF1744).withValues(alpha: 0.3),
+                        blurRadius: 12,
+                        offset: const Offset(0, 4),
+                      ),
+                    ],
+                    child: Container(
+                      height: 60,
+                      alignment: Alignment.center,
+                      decoration: BoxDecoration(
+                        borderRadius: BorderRadius.circular(30),
+                        gradient: const LinearGradient(
+                          begin: Alignment.topLeft,
+                          end: Alignment.bottomRight,
+                          colors: [Color(0xFFFF5252), Color(0xFFB71C1C)],
+                        ),
+                        border: Border.all(
+                          color: Colors.white.withValues(alpha: 0.12),
+                        ),
+                      ),
+                      child: Row(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        mainAxisSize: MainAxisSize.min,
+                        children: const [
+                          Icon(Icons.stop_rounded, color: Colors.white, size: 26),
+                          SizedBox(width: 10),
+                          Text(
+                            'STOP RIDE',
+                            style: TextStyle(
+                              color: Colors.white,
+                              fontWeight: FontWeight.w900,
+                              fontSize: 16,
+                              letterSpacing: 1.6,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+      ),
+    );
+  }
+}
+
+/// Wraps a child with a tactile 3D press effect: scale-down on tap and a
+/// drop shadow that compresses as you push. Used for all big action buttons.
+class _PressEffect extends StatefulWidget {
+  const _PressEffect({
+    required this.child,
+    required this.onTap,
+    this.boxShadow,
+    this.pressedShadow,
+    this.borderRadius,
+    this.shape = BoxShape.rectangle,
+  });
+
+  final Widget child;
+  final VoidCallback onTap;
+  final List<BoxShadow>? boxShadow;
+  final List<BoxShadow>? pressedShadow;
+  final BorderRadiusGeometry? borderRadius;
+  final BoxShape shape;
+
+  @override
+  State<_PressEffect> createState() => _PressEffectState();
+}
+
+class _PressEffectState extends State<_PressEffect> {
+  bool _pressed = false;
+
+  void _setPressed(bool v) {
+    if (_pressed != v) setState(() => _pressed = v);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return GestureDetector(
+      behavior: HitTestBehavior.opaque,
+      onTapDown: (_) => _setPressed(true),
+      onTapUp: (_) {
+        _setPressed(false);
+        widget.onTap();
+      },
+      onTapCancel: () => _setPressed(false),
+      child: AnimatedScale(
+        scale: _pressed ? 0.94 : 1.0,
+        duration: const Duration(milliseconds: 110),
+        curve: Curves.easeOut,
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 180),
+          curve: Curves.easeOut,
+          decoration: BoxDecoration(
+            borderRadius: widget.shape == BoxShape.rectangle
+                ? widget.borderRadius
+                : null,
+            shape: widget.shape,
+            boxShadow: _pressed ? widget.pressedShadow : widget.boxShadow,
+          ),
+          child: widget.child,
+        ),
+      ),
+    );
+  }
+}
+
+/// Gradient stat card with a soft drop shadow — used on the recording
+/// screen so the metrics feel like floating glass tiles.
+class _GlowStatCard extends StatelessWidget {
+  const _GlowStatCard({required this.child});
+  final Widget child;
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    return Container(
+      decoration: BoxDecoration(
+        gradient: LinearGradient(
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+          colors: [
+            scheme.surfaceContainerHigh,
+            scheme.surfaceContainerLow,
+          ],
+        ),
+        borderRadius: BorderRadius.circular(22),
+        border: Border.all(
+          color: scheme.outlineVariant.withValues(alpha: isDark ? 0.4 : 0.3),
+        ),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withValues(alpha: isDark ? 0.35 : 0.08),
+            blurRadius: 14,
+            offset: const Offset(0, 6),
+          ),
+        ],
+      ),
+      child: child,
+    );
+  }
+}
+
+class _BigStat extends StatelessWidget {
+  const _BigStat({required this.value, required this.label});
+  final String value;
+  final String label;
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 4, horizontal: 8),
+      child: Column(
+        children: [
+          Text(
+            value,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            textAlign: TextAlign.center,
+            style: TextStyle(
+              fontFeatures: const [FontFeature.tabularFigures()],
+              fontWeight: FontWeight.w800,
+              fontSize: 22,
+              letterSpacing: -0.5,
+              color: scheme.onSurface,
+            ),
+          ),
+          const SizedBox(height: 4),
+          Text(
+            label,
+            textAlign: TextAlign.center,
+            style: TextStyle(
+              fontSize: 10,
+              fontWeight: FontWeight.w600,
+              letterSpacing: 1.2,
+              color: scheme.onSurfaceVariant,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _VerticalStatDivider extends StatelessWidget {
+  const _VerticalStatDivider();
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: 1,
+      height: 32,
+      color: Theme.of(context).colorScheme.outlineVariant.withValues(
+        alpha: 0.5,
+      ),
+    );
+  }
+}
+
+/// Modern card row for a saved ride. Shows a colored avatar, the title,
+/// inline stat badges, and a delete button. Tap-to-focus is enabled when
+/// the ride has a recorded GPS track.
+class _RideCard extends StatelessWidget {
+  const _RideCard({
+    required this.ride,
+    required this.units,
+    required this.onDelete,
+    this.onTap,
+    this.onShare,
+  });
+
+  final RideEntry ride;
+  final UnitSystem units;
+  final VoidCallback? onTap;
+  final VoidCallback onDelete;
+  final VoidCallback? onShare;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final scheme = theme.colorScheme;
+    final isRecorded = ride.hasRecordedTrack;
+
+    final badges = <Widget>[];
+    final distLabel = ride.distanceLabel(units);
+    final durLabel = ride.durationLabel();
+    final elevLabel = ride.elevationGainLabel(units);
+    final avgLabel = ride.avgSpeedLabel(units);
+    if (distLabel != null) {
+      badges.add(_RideStatBadge(icon: Icons.straighten, label: distLabel));
+    }
+    if (durLabel != null) {
+      badges.add(_RideStatBadge(icon: Icons.timer_outlined, label: durLabel));
+    }
+    if (elevLabel != null) {
+      badges.add(_RideStatBadge(icon: Icons.terrain, label: elevLabel));
+    }
+    if (avgLabel != null) {
+      badges.add(_RideStatBadge(icon: Icons.speed, label: avgLabel));
+    }
+
+    final isDark = theme.brightness == Brightness.dark;
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        borderRadius: BorderRadius.circular(20),
+        gradient: LinearGradient(
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+          colors: [
+            scheme.surfaceContainerHigh,
+            scheme.surfaceContainerLow,
+          ],
+        ),
+        border: Border.all(
+          color: scheme.outlineVariant.withValues(alpha: isDark ? 0.4 : 0.3),
+        ),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withValues(alpha: isDark ? 0.32 : 0.07),
+            blurRadius: 14,
+            offset: const Offset(0, 6),
+          ),
+        ],
+      ),
+      child: Material(
+        type: MaterialType.transparency,
+        child: InkWell(
+          borderRadius: BorderRadius.circular(20),
+          onTap: onTap,
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(14, 14, 8, 14),
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Container(
+                  width: 46,
+                  height: 46,
+                  decoration: BoxDecoration(
+                    gradient: LinearGradient(
+                      begin: Alignment.topLeft,
+                      end: Alignment.bottomRight,
+                      colors: isRecorded
+                          ? const [Color(0xFFFF5252), Color(0xFFB71C1C)]
+                          : [
+                              scheme.primary,
+                              scheme.primary.withValues(alpha: 0.75),
+                            ],
+                    ),
+                    borderRadius: BorderRadius.circular(14),
+                    boxShadow: [
+                      BoxShadow(
+                        color: (isRecorded
+                                ? const Color(0xFFFF1744)
+                                : scheme.primary)
+                            .withValues(alpha: isDark ? 0.45 : 0.3),
+                        blurRadius: 10,
+                        offset: const Offset(0, 4),
+                      ),
+                    ],
+                  ),
+                  alignment: Alignment.center,
+                  child: Icon(
+                    isRecorded ? Icons.route : Icons.directions_bike,
+                    color: Colors.white,
+                    size: 22,
+                  ),
+                ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      crossAxisAlignment: CrossAxisAlignment.center,
+                      children: [
+                        Expanded(
+                          child: Text(
+                            ride.name,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: theme.textTheme.titleMedium?.copyWith(
+                              fontWeight: FontWeight.w700,
+                            ),
+                          ),
+                        ),
+                        Text(
+                          ride.createdLabel(),
+                          style: theme.textTheme.labelSmall?.copyWith(
+                            color: scheme.onSurfaceVariant,
+                            fontFeatures: const [
+                              FontFeature.tabularFigures(),
+                            ],
+                          ),
+                        ),
+                      ],
+                    ),
+                    if (badges.isNotEmpty) ...[
+                      const SizedBox(height: 8),
+                      Wrap(
+                        spacing: 6,
+                        runSpacing: 6,
+                        children: badges,
+                      ),
+                    ],
+                    if (ride.notes.isNotEmpty) ...[
+                      const SizedBox(height: 8),
+                      Text(
+                        ride.notes,
+                        maxLines: 3,
+                        overflow: TextOverflow.ellipsis,
+                        style: theme.textTheme.bodySmall?.copyWith(
+                          color: scheme.onSurfaceVariant,
+                        ),
+                      ),
+                    ],
+                  ],
+                ),
+              ),
+                const SizedBox(width: 4),
+                Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    if (onShare != null)
+                      IconButton(
+                        tooltip: 'Share ride card',
+                        icon: const Icon(Icons.ios_share),
+                        onPressed: onShare,
+                        visualDensity: VisualDensity.compact,
+                      ),
+                    IconButton(
+                      tooltip: 'Remove ride',
+                      icon: const Icon(Icons.delete_outline),
+                      onPressed: onDelete,
+                      visualDensity: VisualDensity.compact,
+                    ),
+                  ],
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// "now" / "5m ago" / "2h ago" / "Jan 5".
+String _formatRelativeTime(DateTime t) {
+  final delta = DateTime.now().difference(t);
+  if (delta.inSeconds < 60) return 'just now';
+  if (delta.inMinutes < 60) return '${delta.inMinutes}m ago';
+  if (delta.inHours < 24) return '${delta.inHours}h ago';
+  return '${t.month}/${t.day}';
+}
+
+class _WeatherStat extends StatelessWidget {
+  const _WeatherStat({
+    required this.icon,
+    required this.label,
+    required this.value,
+  });
+  final IconData icon;
+  final String label;
+  final String value;
+
+  @override
+  Widget build(BuildContext context) {
+    return Expanded(
+      child: Column(
+        children: [
+          Icon(icon, size: 18, color: Colors.white.withValues(alpha: 0.9)),
+          const SizedBox(height: 4),
+          Text(
+            value,
+            style: const TextStyle(
+              color: Colors.white,
+              fontSize: 13,
+              fontWeight: FontWeight.w700,
+            ),
+          ),
+          Text(
+            label,
+            style: TextStyle(
+              color: Colors.white.withValues(alpha: 0.75),
+              fontSize: 10,
+              fontWeight: FontWeight.w600,
+              letterSpacing: 0.5,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _ForecastDayCard extends StatelessWidget {
+  const _ForecastDayCard({required this.day, required this.units});
+  final WeatherDayForecast day;
+  final UnitSystem units;
+
+  static const _weekdayLabels = [
+    'Mon',
+    'Tue',
+    'Wed',
+    'Thu',
+    'Fri',
+    'Sat',
+    'Sun',
+  ];
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    final today = DateTime.now();
+    final isToday =
+        day.date.year == today.year &&
+        day.date.month == today.month &&
+        day.date.day == today.day;
+    final label = isToday ? 'Today' : _weekdayLabels[day.date.weekday - 1];
+
+    return Container(
+      padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 6),
+      decoration: BoxDecoration(
+        borderRadius: BorderRadius.circular(16),
+        color: scheme.surfaceContainerHigh,
+        border: Border.all(
+          color: scheme.outlineVariant.withValues(alpha: 0.3),
+        ),
+      ),
+      child: Column(
+        children: [
+          Text(
+            label,
+            style: TextStyle(
+              fontSize: 11,
+              fontWeight: FontWeight.w700,
+              color: scheme.onSurfaceVariant,
+              letterSpacing: 0.4,
+            ),
+          ),
+          const SizedBox(height: 8),
+          Icon(
+            weatherIconFor(day.weatherCode),
+            color: scheme.primary,
+            size: 26,
+          ),
+          const SizedBox(height: 8),
+          Text(
+            _formatTemperature(day.tempMaxC, units),
+            style: TextStyle(
+              fontSize: 14,
+              fontWeight: FontWeight.w800,
+              color: scheme.onSurface,
+            ),
+          ),
+          Text(
+            _formatTemperature(day.tempMinC, units),
+            style: TextStyle(
+              fontSize: 11,
+              color: scheme.onSurfaceVariant,
+            ),
+          ),
+          if (day.precipitationMm > 0.05) ...[
+            const SizedBox(height: 4),
+            Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Icon(
+                  Icons.water_drop,
+                  size: 10,
+                  color: scheme.primary.withValues(alpha: 0.8),
+                ),
+                const SizedBox(width: 2),
+                Text(
+                  day.precipitationMm.toStringAsFixed(1),
+                  style: TextStyle(
+                    fontSize: 10,
+                    color: scheme.onSurfaceVariant,
+                  ),
+                ),
+              ],
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+}
+
+/// Tappable hero card on the Rides tab. Shows total progress
+/// ("12 of 22 unlocked") with a gradient progress bar and a row of the
+/// most-recently-unlocked badges. Tap to open the full grid.
+class _AchievementsHeaderCard extends StatelessWidget {
+  const _AchievementsHeaderCard({
+    required this.unlockedCount,
+    required this.totalCount,
+    required this.recentUnlocks,
+    required this.onTap,
+  });
+
+  final int unlockedCount;
+  final int totalCount;
+  final List<Achievement> recentUnlocks;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final pct = totalCount == 0 ? 0.0 : unlockedCount / totalCount;
+    return _PressEffect(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(22),
+      boxShadow: [
+        BoxShadow(
+          color: const Color(0xFF6A1B9A).withValues(alpha: 0.35),
+          blurRadius: 18,
+          offset: const Offset(0, 8),
+        ),
+      ],
+      pressedShadow: [
+        BoxShadow(
+          color: const Color(0xFF6A1B9A).withValues(alpha: 0.25),
+          blurRadius: 8,
+          offset: const Offset(0, 3),
+        ),
+      ],
+      child: Container(
+        padding: const EdgeInsets.fromLTRB(16, 14, 16, 14),
+        decoration: BoxDecoration(
+          borderRadius: BorderRadius.circular(22),
+          gradient: const LinearGradient(
+            begin: Alignment.topLeft,
+            end: Alignment.bottomRight,
+            colors: [Color(0xFF8E24AA), Color(0xFF311B92)],
+          ),
+          border: Border.all(color: Colors.white.withValues(alpha: 0.12)),
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Container(
+                  width: 38,
+                  height: 38,
+                  decoration: BoxDecoration(
+                    color: Colors.white.withValues(alpha: 0.18),
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  alignment: Alignment.center,
+                  child: const Icon(
+                    Icons.emoji_events,
+                    color: Color(0xFFFFD54F),
+                    size: 22,
+                  ),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      const Text(
+                        'Achievements',
+                        style: TextStyle(
+                          color: Colors.white,
+                          fontWeight: FontWeight.w800,
+                          fontSize: 16,
+                          letterSpacing: -0.2,
+                        ),
+                      ),
+                      Text(
+                        '$unlockedCount of $totalCount unlocked',
+                        style: TextStyle(
+                          color: Colors.white.withValues(alpha: 0.85),
+                          fontSize: 12,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                const Icon(
+                  Icons.chevron_right,
+                  color: Colors.white70,
+                ),
+              ],
+            ),
+            const SizedBox(height: 12),
+            ClipRRect(
+              borderRadius: BorderRadius.circular(6),
+              child: LinearProgressIndicator(
+                value: pct,
+                minHeight: 6,
+                backgroundColor: Colors.white.withValues(alpha: 0.18),
+                valueColor: const AlwaysStoppedAnimation(
+                  Color(0xFFFFD54F),
+                ),
+              ),
+            ),
+            if (recentUnlocks.isNotEmpty) ...[
+              const SizedBox(height: 12),
+              Row(
+                children: [
+                  for (final a in recentUnlocks)
+                    Padding(
+                      padding: const EdgeInsets.only(right: 8),
+                      child: Container(
+                        width: 32,
+                        height: 32,
+                        decoration: BoxDecoration(
+                          color: a.color.withValues(alpha: 0.25),
+                          borderRadius: BorderRadius.circular(10),
+                          border: Border.all(
+                            color: a.color.withValues(alpha: 0.7),
+                          ),
+                        ),
+                        alignment: Alignment.center,
+                        child: Icon(a.icon, color: a.color, size: 18),
+                      ),
+                    ),
+                ],
+              ),
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+/// Full-screen view of every badge, grouped by category. Locked badges
+/// are desaturated and show a tiny progress bar; tap any badge for a
+/// details dialog.
+class _AchievementsScreen extends StatelessWidget {
+  const _AchievementsScreen({
+    required this.rides,
+    required this.unlocks,
+  });
+
+  final List<RideEntry> rides;
+  final Map<String, DateTime> unlocks;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final unlockedCount = kAchievements
+        .where((a) => unlocks.containsKey(a.id))
+        .length;
+    final pct = unlockedCount / kAchievements.length;
+
+    final categories = AchievementCategory.values;
+
+    return Scaffold(
+      appBar: AppBar(
+        title: const Text('Achievements'),
+      ),
+      body: ListView(
+        padding: const EdgeInsets.fromLTRB(16, 8, 16, 24),
+        children: [
+          Container(
+            padding: const EdgeInsets.all(16),
+            decoration: BoxDecoration(
+              borderRadius: BorderRadius.circular(22),
+              gradient: const LinearGradient(
+                begin: Alignment.topLeft,
+                end: Alignment.bottomRight,
+                colors: [Color(0xFF8E24AA), Color(0xFF311B92)],
+              ),
+              boxShadow: [
+                BoxShadow(
+                  color: const Color(0xFF6A1B9A).withValues(alpha: 0.3),
+                  blurRadius: 18,
+                  offset: const Offset(0, 8),
+                ),
+              ],
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  children: [
+                    const Icon(
+                      Icons.emoji_events,
+                      color: Color(0xFFFFD54F),
+                      size: 28,
+                    ),
+                    const SizedBox(width: 10),
+                    Text(
+                      '$unlockedCount of ${kAchievements.length}',
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontSize: 28,
+                        fontWeight: FontWeight.w800,
+                        letterSpacing: -0.8,
+                      ),
+                    ),
+                  ],
+                ),
+                Text(
+                  unlockedCount == 0
+                      ? 'Save a ride to unlock your first badge.'
+                      : 'Keep riding to unlock the rest!',
+                  style: TextStyle(
+                    color: Colors.white.withValues(alpha: 0.85),
+                    fontSize: 13,
+                  ),
+                ),
+                const SizedBox(height: 12),
+                ClipRRect(
+                  borderRadius: BorderRadius.circular(6),
+                  child: LinearProgressIndicator(
+                    value: pct,
+                    minHeight: 8,
+                    backgroundColor: Colors.white.withValues(alpha: 0.2),
+                    valueColor: const AlwaysStoppedAnimation(
+                      Color(0xFFFFD54F),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(height: 20),
+          for (final cat in categories) ...[
+            Padding(
+              padding: const EdgeInsets.fromLTRB(4, 8, 4, 10),
+              child: Text(
+                cat.label.toUpperCase(),
+                style: TextStyle(
+                  fontSize: 11,
+                  letterSpacing: 1.6,
+                  fontWeight: FontWeight.w800,
+                  color: theme.colorScheme.onSurfaceVariant,
+                ),
+              ),
+            ),
+            GridView.count(
+              shrinkWrap: true,
+              physics: const NeverScrollableScrollPhysics(),
+              crossAxisCount: 3,
+              mainAxisSpacing: 10,
+              crossAxisSpacing: 10,
+              childAspectRatio: 0.78,
+              children: [
+                for (final a in kAchievements.where((x) => x.category == cat))
+                  _AchievementTile(
+                    achievement: a,
+                    progress: a.progress(rides),
+                    unlockedAt: unlocks[a.id],
+                  ),
+              ],
+            ),
+            const SizedBox(height: 16),
+          ],
+        ],
+      ),
+    );
+  }
+}
+
+class _AchievementTile extends StatelessWidget {
+  const _AchievementTile({
+    required this.achievement,
+    required this.progress,
+    required this.unlockedAt,
+  });
+
+  final Achievement achievement;
+  final AchievementProgress progress;
+  final DateTime? unlockedAt;
+
+  void _showDetails(BuildContext context) {
+    showDialog<void>(
+      context: context,
+      builder: (dialogContext) {
+        final unlocked = progress.isUnlocked;
+        return AlertDialog(
+          icon: Container(
+            width: 64,
+            height: 64,
+            decoration: BoxDecoration(
+              color: achievement.color.withValues(
+                alpha: unlocked ? 0.2 : 0.08,
+              ),
+              borderRadius: BorderRadius.circular(20),
+              border: Border.all(
+                color: achievement.color.withValues(
+                  alpha: unlocked ? 0.7 : 0.25,
+                ),
+              ),
+            ),
+            alignment: Alignment.center,
+            child: Icon(
+              achievement.icon,
+              color: unlocked
+                  ? achievement.color
+                  : Theme.of(dialogContext).colorScheme.onSurfaceVariant,
+              size: 32,
+            ),
+          ),
+          title: Text(
+            achievement.title,
+            textAlign: TextAlign.center,
+          ),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Text(
+                achievement.description,
+                textAlign: TextAlign.center,
+              ),
+              const SizedBox(height: 14),
+              ClipRRect(
+                borderRadius: BorderRadius.circular(6),
+                child: LinearProgressIndicator(
+                  value: progress.percent,
+                  minHeight: 6,
+                  backgroundColor: Theme.of(
+                    dialogContext,
+                  ).colorScheme.surfaceContainerHighest,
+                  valueColor: AlwaysStoppedAnimation(achievement.color),
+                ),
+              ),
+              const SizedBox(height: 6),
+              Text(
+                formatAchievementProgress(achievement, progress),
+                style: TextStyle(
+                  fontSize: 12,
+                  color: Theme.of(dialogContext).colorScheme.onSurfaceVariant,
+                ),
+              ),
+              if (unlocked && unlockedAt != null) ...[
+                const SizedBox(height: 8),
+                Text(
+                  'Unlocked ${_formatRelativeTime(unlockedAt!)}',
+                  style: TextStyle(
+                    fontSize: 11,
+                    color: Theme.of(
+                      dialogContext,
+                    ).colorScheme.onSurfaceVariant,
+                  ),
+                ),
+              ],
+            ],
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(dialogContext).pop(),
+              child: const Text('Close'),
+            ),
+          ],
+        );
+      },
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    final unlocked = progress.isUnlocked;
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+
+    return Material(
+      color: scheme.surfaceContainerHigh,
+      borderRadius: BorderRadius.circular(18),
+      clipBehavior: Clip.antiAlias,
+      child: InkWell(
+        onTap: () => _showDetails(context),
+        child: Container(
+          padding: const EdgeInsets.all(10),
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(18),
+            gradient: unlocked
+                ? LinearGradient(
+                    begin: Alignment.topLeft,
+                    end: Alignment.bottomRight,
+                    colors: [
+                      achievement.color.withValues(
+                        alpha: isDark ? 0.32 : 0.18,
+                      ),
+                      scheme.surfaceContainerHigh,
+                    ],
+                  )
+                : null,
+            border: Border.all(
+              color: unlocked
+                  ? achievement.color.withValues(alpha: 0.5)
+                  : scheme.outlineVariant.withValues(alpha: 0.3),
+            ),
+          ),
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Container(
+                width: 44,
+                height: 44,
+                decoration: BoxDecoration(
+                  color: unlocked
+                      ? achievement.color.withValues(alpha: 0.22)
+                      : scheme.surfaceContainerHighest,
+                  borderRadius: BorderRadius.circular(14),
+                  boxShadow: unlocked
+                      ? [
+                          BoxShadow(
+                            color: achievement.color.withValues(alpha: 0.35),
+                            blurRadius: 10,
+                            offset: const Offset(0, 4),
+                          ),
+                        ]
+                      : null,
+                ),
+                alignment: Alignment.center,
+                child: Icon(
+                  achievement.icon,
+                  color: unlocked
+                      ? achievement.color
+                      : scheme.onSurfaceVariant.withValues(alpha: 0.4),
+                  size: 22,
+                ),
+              ),
+              const SizedBox(height: 8),
+              Text(
+                achievement.title,
+                maxLines: 2,
+                overflow: TextOverflow.ellipsis,
+                textAlign: TextAlign.center,
+                style: TextStyle(
+                  fontSize: 11,
+                  fontWeight: FontWeight.w700,
+                  color: unlocked
+                      ? scheme.onSurface
+                      : scheme.onSurfaceVariant,
+                  height: 1.2,
+                ),
+              ),
+              const SizedBox(height: 4),
+              if (unlocked)
+                Text(
+                  'UNLOCKED',
+                  style: TextStyle(
+                    fontSize: 8.5,
+                    fontWeight: FontWeight.w800,
+                    letterSpacing: 1.0,
+                    color: achievement.color,
+                  ),
+                )
+              else
+                Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 4),
+                  child: ClipRRect(
+                    borderRadius: BorderRadius.circular(3),
+                    child: LinearProgressIndicator(
+                      value: progress.percent,
+                      minHeight: 3,
+                      backgroundColor: scheme.surfaceContainerHighest,
+                      valueColor: AlwaysStoppedAnimation(
+                        achievement.color.withValues(alpha: 0.7),
+                      ),
+                    ),
+                  ),
+                ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// Modal sheet for choosing what location the weather should follow.
+/// Three sources: city search (Open-Meteo geocoding), device GPS, or the
+/// current map view. Calls back when the user picks something.
+class _WeatherLocationPickerSheet extends StatefulWidget {
+  const _WeatherLocationPickerSheet({
+    required this.currentPin,
+    required this.onSearch,
+    required this.onPick,
+    required this.onUseGps,
+    required this.onFollowMap,
+  });
+
+  final WeatherLocation? currentPin;
+  final Future<List<WeatherLocation>> Function(String query) onSearch;
+  final ValueChanged<WeatherLocation> onPick;
+  final VoidCallback onUseGps;
+  final VoidCallback onFollowMap;
+
+  @override
+  State<_WeatherLocationPickerSheet> createState() =>
+      _WeatherLocationPickerSheetState();
+}
+
+class _WeatherLocationPickerSheetState
+    extends State<_WeatherLocationPickerSheet> {
+  final TextEditingController _searchController = TextEditingController();
+  Timer? _debounce;
+  bool _searching = false;
+  String _lastQuery = '';
+  List<WeatherLocation> _results = const [];
+
+  @override
+  void dispose() {
+    _debounce?.cancel();
+    _searchController.dispose();
+    super.dispose();
+  }
+
+  void _onQueryChanged(String value) {
+    _debounce?.cancel();
+    _debounce = Timer(const Duration(milliseconds: 320), () {
+      _runSearch(value);
+    });
+  }
+
+  Future<void> _runSearch(String value) async {
+    final query = value.trim();
+    if (query == _lastQuery && _results.isNotEmpty) return;
+    _lastQuery = query;
+    if (query.isEmpty) {
+      setState(() {
+        _results = const [];
+        _searching = false;
+      });
+      return;
+    }
+    setState(() => _searching = true);
+    final results = await widget.onSearch(query);
+    if (!mounted) return;
+    setState(() {
+      _searching = false;
+      _results = results;
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final scheme = theme.colorScheme;
+    final mediaQuery = MediaQuery.of(context);
+    final bottomInset = mediaQuery.viewInsets.bottom;
+
+    return Padding(
+      padding: EdgeInsets.only(bottom: bottomInset),
+      child: SafeArea(
+        top: false,
+        child: DraggableScrollableSheet(
+          expand: false,
+          initialChildSize: 0.6,
+          minChildSize: 0.4,
+          maxChildSize: 0.92,
+          builder: (context, scrollController) {
+            return Container(
+              decoration: BoxDecoration(
+                color: scheme.surface,
+                borderRadius: const BorderRadius.vertical(
+                  top: Radius.circular(28),
+                ),
+              ),
+              child: Column(
+                children: [
+                  Padding(
+                    padding: const EdgeInsets.only(top: 10, bottom: 4),
+                    child: Container(
+                      width: 36,
+                      height: 4,
+                      decoration: BoxDecoration(
+                        color: scheme.outlineVariant,
+                        borderRadius: BorderRadius.circular(2),
+                      ),
+                    ),
+                  ),
+                  Padding(
+                    padding: const EdgeInsets.fromLTRB(20, 8, 20, 8),
+                    child: Row(
+                      children: [
+                        Icon(
+                          Icons.place_outlined,
+                          color: scheme.primary,
+                        ),
+                        const SizedBox(width: 8),
+                        Expanded(
+                          child: Text(
+                            'Weather location',
+                            style: theme.textTheme.titleLarge,
+                          ),
+                        ),
+                        IconButton(
+                          tooltip: 'Close',
+                          icon: const Icon(Icons.close),
+                          onPressed: () => Navigator.of(context).pop(),
+                        ),
+                      ],
+                    ),
+                  ),
+                  Padding(
+                    padding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
+                    child: TextField(
+                      controller: _searchController,
+                      autofocus: true,
+                      textInputAction: TextInputAction.search,
+                      onChanged: _onQueryChanged,
+                      onSubmitted: _runSearch,
+                      decoration: InputDecoration(
+                        hintText: 'Search city, town, place\u2026',
+                        prefixIcon: const Icon(Icons.search),
+                        suffixIcon: _searchController.text.isEmpty
+                            ? null
+                            : IconButton(
+                                icon: const Icon(Icons.clear),
+                                onPressed: () {
+                                  _searchController.clear();
+                                  _onQueryChanged('');
+                                },
+                              ),
+                      ),
+                    ),
+                  ),
+                  Expanded(
+                    child: ListView(
+                      controller: scrollController,
+                      padding: const EdgeInsets.fromLTRB(8, 0, 8, 16),
+                      children: [
+                        _PickerTile(
+                          icon: Icons.my_location,
+                          color: Colors.redAccent,
+                          title: 'Use my GPS location',
+                          subtitle: 'Detect where you are right now',
+                          onTap: () {
+                            Navigator.of(context).pop();
+                            widget.onUseGps();
+                          },
+                        ),
+                        _PickerTile(
+                          icon: Icons.map_outlined,
+                          color: scheme.primary,
+                          title: widget.currentPin == null
+                              ? 'Following map (current)'
+                              : 'Follow the map view',
+                          subtitle:
+                              'Weather updates as you pan and zoom',
+                          trailingCheck: widget.currentPin == null,
+                          onTap: () {
+                            Navigator.of(context).pop();
+                            widget.onFollowMap();
+                          },
+                        ),
+                        if (_results.isNotEmpty ||
+                            _searching ||
+                            _lastQuery.isNotEmpty)
+                          Padding(
+                            padding:
+                                const EdgeInsets.fromLTRB(16, 16, 16, 4),
+                            child: Text(
+                              'SEARCH RESULTS',
+                              style: TextStyle(
+                                fontSize: 11,
+                                letterSpacing: 1.4,
+                                fontWeight: FontWeight.w800,
+                                color: scheme.onSurfaceVariant,
+                              ),
+                            ),
+                          ),
+                        if (_searching)
+                          const Padding(
+                            padding: EdgeInsets.symmetric(vertical: 16),
+                            child: Center(
+                              child: SizedBox(
+                                width: 22,
+                                height: 22,
+                                child: CircularProgressIndicator(
+                                  strokeWidth: 2,
+                                ),
+                              ),
+                            ),
+                          )
+                        else if (_results.isEmpty &&
+                            _lastQuery.isNotEmpty)
+                          Padding(
+                            padding: const EdgeInsets.symmetric(
+                              vertical: 24,
+                              horizontal: 16,
+                            ),
+                            child: Text(
+                              'No matches found',
+                              textAlign: TextAlign.center,
+                              style: theme.textTheme.bodyMedium?.copyWith(
+                                color: scheme.onSurfaceVariant,
+                              ),
+                            ),
+                          )
+                        else
+                          for (final r in _results)
+                            _PickerTile(
+                              icon: Icons.location_on_outlined,
+                              color: scheme.tertiary,
+                              title: r.name,
+                              subtitle: [
+                                if (r.admin != null) r.admin!,
+                                if (r.country != null) r.country!,
+                              ].join(' · '),
+                              onTap: () {
+                                Navigator.of(context).pop();
+                                widget.onPick(r);
+                              },
+                            ),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+            );
+          },
+        ),
+      ),
+    );
+  }
+}
+
+class _PickerTile extends StatelessWidget {
+  const _PickerTile({
+    required this.icon,
+    required this.color,
+    required this.title,
+    required this.subtitle,
+    required this.onTap,
+    this.trailingCheck = false,
+  });
+
+  final IconData icon;
+  final Color color;
+  final String title;
+  final String subtitle;
+  final VoidCallback onTap;
+  final bool trailingCheck;
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+      child: Material(
+        color: scheme.surfaceContainerHigh,
+        borderRadius: BorderRadius.circular(16),
+        clipBehavior: Clip.antiAlias,
+        child: InkWell(
+          onTap: onTap,
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(12, 12, 12, 12),
+            child: Row(
+              children: [
+                Container(
+                  width: 36,
+                  height: 36,
+                  decoration: BoxDecoration(
+                    color: color.withValues(alpha: 0.15),
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  alignment: Alignment.center,
+                  child: Icon(icon, color: color, size: 20),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        title,
+                        style: const TextStyle(
+                          fontWeight: FontWeight.w700,
+                          fontSize: 14,
+                        ),
+                      ),
+                      if (subtitle.isNotEmpty)
+                        Text(
+                          subtitle,
+                          style: TextStyle(
+                            fontSize: 12,
+                            color: scheme.onSurfaceVariant,
+                          ),
+                        ),
+                    ],
+                  ),
+                ),
+                if (trailingCheck)
+                  Icon(Icons.check, color: scheme.primary, size: 20),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// Glassy gradient weather chip shown on the Map tab. Color is driven by
+/// the current WMO weather code so the chip "looks like" the conditions —
+/// warm for sun, deep blue for night, gray for fog, etc. Tap to open the
+/// full 3-day forecast sheet.
+class _WeatherChip extends StatelessWidget {
+  const _WeatherChip({
+    required this.snapshot,
+    required this.units,
+    required this.onTap,
+    required this.isLoading,
+  });
+
+  final WeatherSnapshot snapshot;
+  final UnitSystem units;
+  final VoidCallback onTap;
+  final bool isLoading;
+
+  @override
+  Widget build(BuildContext context) {
+    final gradient = weatherGradientFor(
+      snapshot.weatherCode,
+      isDay: snapshot.isDay,
+    );
+    final icon = weatherIconFor(snapshot.weatherCode, isDay: snapshot.isDay);
+    final label = weatherLabelFor(snapshot.weatherCode);
+    final tempStr = _formatTemperature(snapshot.tempC, units);
+
+    return _PressEffect(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(20),
+      boxShadow: [
+        BoxShadow(
+          color: gradient.last.withValues(alpha: 0.45),
+          blurRadius: 16,
+          offset: const Offset(0, 6),
+        ),
+      ],
+      pressedShadow: [
+        BoxShadow(
+          color: gradient.last.withValues(alpha: 0.3),
+          blurRadius: 8,
+          offset: const Offset(0, 3),
+        ),
+      ],
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+        decoration: BoxDecoration(
+          borderRadius: BorderRadius.circular(20),
+          gradient: LinearGradient(
+            begin: Alignment.topLeft,
+            end: Alignment.bottomRight,
+            colors: gradient,
+          ),
+          border: Border.all(color: Colors.white.withValues(alpha: 0.18)),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(icon, color: Colors.white, size: 22),
+            const SizedBox(width: 8),
+            Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text(
+                  tempStr,
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontSize: 17,
+                    fontWeight: FontWeight.w800,
+                    letterSpacing: -0.3,
+                    height: 1.0,
+                  ),
+                ),
+                const SizedBox(height: 2),
+                Text(
+                  label,
+                  style: TextStyle(
+                    color: Colors.white.withValues(alpha: 0.92),
+                    fontSize: 10,
+                    fontWeight: FontWeight.w600,
+                    letterSpacing: 0.3,
+                    height: 1.0,
+                  ),
+                ),
+              ],
+            ),
+            if (isLoading) ...[
+              const SizedBox(width: 8),
+              const SizedBox(
+                width: 12,
+                height: 12,
+                child: CircularProgressIndicator(
+                  strokeWidth: 1.6,
+                  color: Colors.white,
+                ),
+              ),
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _RideStatBadge extends StatelessWidget {
+  const _RideStatBadge({required this.icon, required this.label});
+
+  final IconData icon;
+  final String label;
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+      decoration: BoxDecoration(
+        color: scheme.surfaceContainerHighest,
+        borderRadius: BorderRadius.circular(10),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(icon, size: 12, color: scheme.onSurfaceVariant),
+          const SizedBox(width: 4),
+          Text(
+            label,
+            style: TextStyle(
+              fontSize: 11,
+              fontWeight: FontWeight.w600,
+              color: scheme.onSurfaceVariant,
+              fontFeatures: const [FontFeature.tabularFigures()],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Shareable ride card
+// ---------------------------------------------------------------------------
+
+/// Renders a recorded GPS track as standalone "trail art": a glowing
+/// polyline centered in its bounding box, with start/end dots. Uses a
+/// rough Mercator x-scale so the shape doesn't look squashed at higher
+/// latitudes.
+class _RouteShapePainter extends CustomPainter {
+  _RouteShapePainter({
+    required this.points,
+    required this.color,
+  });
+
+  final List<LatLng> points;
+  final Color color;
+  static const double _padding = 28;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    if (points.length < 2) return;
+
+    var minLat = points.first.latitude;
+    var maxLat = minLat;
+    var minLng = points.first.longitude;
+    var maxLng = minLng;
+    for (final p in points) {
+      if (p.latitude < minLat) minLat = p.latitude;
+      if (p.latitude > maxLat) maxLat = p.latitude;
+      if (p.longitude < minLng) minLng = p.longitude;
+      if (p.longitude > maxLng) maxLng = p.longitude;
+    }
+
+    final cosLat = math.cos(
+      ((minLat + maxLat) / 2) * math.pi / 180,
+    );
+    final spanLat = (maxLat - minLat).abs();
+    final spanLng = (maxLng - minLng).abs() * cosLat;
+    if (spanLat == 0 || spanLng == 0) return;
+
+    final w = size.width - 2 * _padding;
+    final h = size.height - 2 * _padding;
+    final scale = math.min(w / spanLng, h / spanLat);
+
+    // Center the bounding box inside the canvas.
+    final renderedW = spanLng * scale;
+    final renderedH = spanLat * scale;
+    final ox = _padding + (w - renderedW) / 2;
+    final oy = _padding + (h - renderedH) / 2;
+
+    Offset project(LatLng p) {
+      final x = (p.longitude - minLng) * cosLat * scale;
+      final y = (maxLat - p.latitude) * scale;
+      return Offset(ox + x, oy + y);
+    }
+
+    final routePath = ui.Path();
+    routePath.moveTo(project(points.first).dx, project(points.first).dy);
+    for (var i = 1; i < points.length; i++) {
+      final o = project(points[i]);
+      routePath.lineTo(o.dx, o.dy);
+    }
+
+    final glow = Paint()
+      ..color = color.withValues(alpha: 0.55)
+      ..style = PaintingStyle.stroke
+      ..strokeCap = StrokeCap.round
+      ..strokeJoin = StrokeJoin.round
+      ..strokeWidth = 14
+      ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 10);
+
+    final stroke = Paint()
+      ..color = color
+      ..style = PaintingStyle.stroke
+      ..strokeCap = StrokeCap.round
+      ..strokeJoin = StrokeJoin.round
+      ..strokeWidth = 5;
+
+    final highlight = Paint()
+      ..color = Colors.white.withValues(alpha: 0.5)
+      ..style = PaintingStyle.stroke
+      ..strokeCap = StrokeCap.round
+      ..strokeJoin = StrokeJoin.round
+      ..strokeWidth = 1.4;
+
+    canvas.drawPath(routePath, glow);
+    canvas.drawPath(routePath, stroke);
+    canvas.drawPath(routePath, highlight);
+
+    final start = project(points.first);
+    final end = project(points.last);
+
+    // Start dot — bright green with white halo.
+    canvas.drawCircle(
+      start,
+      9,
+      Paint()..color = Colors.white,
+    );
+    canvas.drawCircle(
+      start,
+      6,
+      Paint()..color = const Color(0xFF66BB6A),
+    );
+
+    // End dot — checkered flag color with white halo.
+    canvas.drawCircle(
+      end,
+      9,
+      Paint()..color = Colors.white,
+    );
+    canvas.drawCircle(
+      end,
+      6,
+      Paint()..color = const Color(0xFFFF5252),
+    );
+  }
+
+  @override
+  bool shouldRepaint(covariant _RouteShapePainter old) =>
+      old.points != points || old.color != color;
+}
+
+/// The visual share card. Designed to be rendered offscreen-able inside a
+/// `RepaintBoundary` and exported to PNG. Always uses dark colors so the
+/// captured image looks the same regardless of the app's current theme.
+class _RideSummaryCard extends StatelessWidget {
+  const _RideSummaryCard({
+    required this.ride,
+    required this.units,
+    required this.unlockedAchievements,
+  });
+
+  final RideEntry ride;
+  final UnitSystem units;
+  final List<Achievement> unlockedAchievements;
+
+  static const _bgDark = Color(0xFF0E1A12);
+  static const _bgMid = Color(0xFF132A1B);
+  static const _accent = Color(0xFF86E96B);
+  static const _accentSoft = Color(0xFFB6F2A1);
+
+  @override
+  Widget build(BuildContext context) {
+    final dateLabel = _formatRideDate(ride.createdAt);
+    final stats = <_SummaryStat>[
+      _SummaryStat(
+        label: 'Distance',
+        value: ride.distanceLabel(units) ?? '—',
+        icon: Icons.straighten,
+      ),
+      _SummaryStat(
+        label: 'Time',
+        value: ride.durationLabel() ?? '—',
+        icon: Icons.timer_outlined,
+      ),
+      _SummaryStat(
+        label: 'Elev gain',
+        value: ride.elevationGainLabel(units) ?? '—',
+        icon: Icons.terrain,
+      ),
+      _SummaryStat(
+        label: 'Avg speed',
+        value: ride.avgSpeedLabel(units) ?? '—',
+        icon: Icons.speed,
+      ),
+    ];
+
+    return AspectRatio(
+      aspectRatio: 4 / 5,
+      child: Container(
+        decoration: const BoxDecoration(
+          gradient: LinearGradient(
+            begin: Alignment.topLeft,
+            end: Alignment.bottomRight,
+            colors: [_bgMid, _bgDark],
+          ),
+        ),
+        child: Stack(
+          children: [
+            Positioned(
+              top: -80,
+              right: -80,
+              child: Container(
+                width: 240,
+                height: 240,
+                decoration: BoxDecoration(
+                  shape: BoxShape.circle,
+                  gradient: RadialGradient(
+                    colors: [
+                      _accent.withValues(alpha: 0.18),
+                      _accent.withValues(alpha: 0.0),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(24, 24, 24, 24),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    children: [
+                      const Icon(
+                        Icons.terrain,
+                        color: _accent,
+                        size: 18,
+                      ),
+                      const SizedBox(width: 6),
+                      const Text(
+                        'WILDHORIZON',
+                        style: TextStyle(
+                          color: Colors.white,
+                          fontSize: 12,
+                          fontWeight: FontWeight.w800,
+                          letterSpacing: 2,
+                        ),
+                      ),
+                      const Spacer(),
+                      Text(
+                        dateLabel,
+                        style: TextStyle(
+                          color: Colors.white.withValues(alpha: 0.7),
+                          fontSize: 12,
+                          fontWeight: FontWeight.w600,
+                          letterSpacing: 0.4,
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 14),
+                  Text(
+                    ride.name,
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(
+                      color: Colors.white,
+                      fontSize: 28,
+                      fontWeight: FontWeight.w800,
+                      letterSpacing: -0.8,
+                      height: 1.1,
+                    ),
+                  ),
+                  const SizedBox(height: 14),
+                  Expanded(
+                    child: Container(
+                      width: double.infinity,
+                      decoration: BoxDecoration(
+                        borderRadius: BorderRadius.circular(22),
+                        gradient: LinearGradient(
+                          begin: Alignment.topLeft,
+                          end: Alignment.bottomRight,
+                          colors: [
+                            Colors.white.withValues(alpha: 0.06),
+                            Colors.white.withValues(alpha: 0.02),
+                          ],
+                        ),
+                        border: Border.all(
+                          color: _accent.withValues(alpha: 0.25),
+                        ),
+                      ),
+                      child: ride.hasRecordedTrack
+                          ? CustomPaint(
+                              painter: _RouteShapePainter(
+                                points: ride.track,
+                                color: _accentSoft,
+                              ),
+                              child: const SizedBox.expand(),
+                            )
+                          : const Center(
+                              child: Icon(
+                                Icons.directions_bike,
+                                color: _accent,
+                                size: 64,
+                              ),
+                            ),
+                    ),
+                  ),
+                  const SizedBox(height: 14),
+                  Row(
+                    children: [
+                      Expanded(child: _summaryStatTile(stats[0])),
+                      const SizedBox(width: 10),
+                      Expanded(child: _summaryStatTile(stats[1])),
+                    ],
+                  ),
+                  const SizedBox(height: 10),
+                  Row(
+                    children: [
+                      Expanded(child: _summaryStatTile(stats[2])),
+                      const SizedBox(width: 10),
+                      Expanded(child: _summaryStatTile(stats[3])),
+                    ],
+                  ),
+                  if (unlockedAchievements.isNotEmpty) ...[
+                    const SizedBox(height: 12),
+                    SizedBox(
+                      height: 36,
+                      child: Row(
+                        children: [
+                          const Icon(
+                            Icons.emoji_events,
+                            color: Color(0xFFFFD54F),
+                            size: 16,
+                          ),
+                          const SizedBox(width: 6),
+                          for (final a in unlockedAchievements.take(4))
+                            Padding(
+                              padding: const EdgeInsets.only(right: 6),
+                              child: Container(
+                                width: 32,
+                                height: 32,
+                                decoration: BoxDecoration(
+                                  color:
+                                      a.color.withValues(alpha: 0.22),
+                                  borderRadius: BorderRadius.circular(10),
+                                  border: Border.all(
+                                    color: a.color.withValues(alpha: 0.7),
+                                  ),
+                                ),
+                                alignment: Alignment.center,
+                                child: Icon(
+                                  a.icon,
+                                  color: a.color,
+                                  size: 18,
+                                ),
+                              ),
+                            ),
+                          if (unlockedAchievements.length > 4)
+                            Text(
+                              '+${unlockedAchievements.length - 4}',
+                              style: TextStyle(
+                                color: Colors.white.withValues(alpha: 0.85),
+                                fontSize: 12,
+                                fontWeight: FontWeight.w700,
+                              ),
+                            ),
+                        ],
+                      ),
+                    ),
+                  ],
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _summaryStatTile(_SummaryStat s) {
+    return Container(
+      padding: const EdgeInsets.fromLTRB(14, 12, 14, 12),
+      decoration: BoxDecoration(
+        borderRadius: BorderRadius.circular(16),
+        gradient: LinearGradient(
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+          colors: [
+            Colors.white.withValues(alpha: 0.08),
+            Colors.white.withValues(alpha: 0.02),
+          ],
+        ),
+        border: Border.all(color: Colors.white.withValues(alpha: 0.08)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Icon(s.icon, color: _accent, size: 14),
+              const SizedBox(width: 6),
+              Text(
+                s.label.toUpperCase(),
+                style: TextStyle(
+                  color: Colors.white.withValues(alpha: 0.7),
+                  fontSize: 10,
+                  fontWeight: FontWeight.w700,
+                  letterSpacing: 1.2,
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 6),
+          Text(
+            s.value,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: const TextStyle(
+              color: Colors.white,
+              fontSize: 20,
+              fontWeight: FontWeight.w800,
+              letterSpacing: -0.5,
+              fontFeatures: [FontFeature.tabularFigures()],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _SummaryStat {
+  const _SummaryStat({
+    required this.label,
+    required this.value,
+    required this.icon,
+  });
+  final String label;
+  final String value;
+  final IconData icon;
+}
+
+/// "Sun, Jun 28 · 3:14 PM"
+String _formatRideDate(DateTime t) {
+  const dayNames = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+  const monthNames = [
+    'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
+    'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec',
+  ];
+  final day = dayNames[t.weekday - 1];
+  final mon = monthNames[t.month - 1];
+  var hour = t.hour % 12;
+  if (hour == 0) hour = 12;
+  final am = t.hour < 12 ? 'AM' : 'PM';
+  final mins = t.minute.toString().padLeft(2, '0');
+  return '$day, $mon ${t.day} · $hour:$mins $am';
+}
+
+/// Hosts the shareable [_RideSummaryCard] inside a `RepaintBoundary` so
+/// the user can capture it as a PNG (saved to ~/Pictures/WildHorizon on
+/// macOS). The screen itself is dark to match the card's design.
+class _RideShareScreen extends StatefulWidget {
+  const _RideShareScreen({
+    required this.ride,
+    required this.units,
+    required this.unlockedAchievements,
+  });
+
+  final RideEntry ride;
+  final UnitSystem units;
+  final List<Achievement> unlockedAchievements;
+
+  @override
+  State<_RideShareScreen> createState() => _RideShareScreenState();
+}
+
+class _RideShareScreenState extends State<_RideShareScreen> {
+  final GlobalKey _cardKey = GlobalKey();
+  bool _saving = false;
+
+  Future<void> _onSave() async {
+    if (_saving) return;
+    setState(() => _saving = true);
+
+    File? savedFile;
+    String? error;
+    try {
+      final bytes = await _captureCardAsPng();
+      if (bytes == null) {
+        error = 'Could not capture image';
+      } else {
+        savedFile = await _saveCardToDisk(bytes);
+      }
+    } catch (e) {
+      error = 'Save failed: $e';
+    }
+
+    if (!mounted) return;
+    setState(() => _saving = false);
+
+    final messenger = ScaffoldMessenger.of(context);
+    messenger.hideCurrentSnackBar();
+    if (error != null || savedFile == null) {
+      messenger.showSnackBar(
+        SnackBar(content: Text(error ?? 'Could not save image')),
+      );
+      return;
+    }
+
+    messenger.showSnackBar(
+      SnackBar(
+        duration: const Duration(seconds: 6),
+        content: Text('Saved to ${savedFile.path}'),
+        action: Platform.isMacOS
+            ? SnackBarAction(
+                label: 'Show in Finder',
+                onPressed: () {
+                  Process.run('open', ['-R', savedFile!.path]);
+                },
+              )
+            : null,
+      ),
+    );
+  }
+
+  Future<Uint8List?> _captureCardAsPng() async {
+    // Let any pending layout/paint finish before reading the pixels.
+    await WidgetsBinding.instance.endOfFrame;
+    final boundary =
+        _cardKey.currentContext?.findRenderObject()
+            as RenderRepaintBoundary?;
+    if (boundary == null) return null;
+    final image = await boundary.toImage(pixelRatio: 3.0);
+    final byteData = await image.toByteData(
+      format: ui.ImageByteFormat.png,
+    );
+    image.dispose();
+    return byteData?.buffer.asUint8List();
+  }
+
+  Future<File?> _saveCardToDisk(Uint8List bytes) async {
+    final stamp = DateTime.now().millisecondsSinceEpoch;
+    final safeName = widget.ride.name
+        .replaceAll(RegExp(r'[^A-Za-z0-9_-]+'), '_')
+        .replaceAll(RegExp(r'_+'), '_')
+        .toLowerCase();
+    final filename = 'wildhorizon_${safeName}_$stamp.png';
+
+    Directory dir;
+    if (Platform.isMacOS) {
+      final home = Platform.environment['HOME'];
+      if (home != null && home.isNotEmpty) {
+        dir = Directory('$home/Pictures/WildHorizon');
+      } else {
+        dir = Directory.systemTemp;
+      }
+    } else {
+      dir = Directory.systemTemp;
+    }
+    await dir.create(recursive: true);
+    final file = File('${dir.path}/$filename');
+    await file.writeAsBytes(bytes);
+    return file;
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      backgroundColor: const Color(0xFF050A07),
+      appBar: AppBar(
+        backgroundColor: const Color(0xFF050A07),
+        foregroundColor: Colors.white,
+        elevation: 0,
+        title: const Text('Share ride'),
+        actions: [
+          IconButton(
+            tooltip: 'Save image',
+            icon: _saving
+                ? const SizedBox(
+                    width: 18,
+                    height: 18,
+                    child: CircularProgressIndicator(
+                      strokeWidth: 2,
+                      color: Colors.white,
+                    ),
+                  )
+                : const Icon(Icons.ios_share),
+            onPressed: _saving ? null : _onSave,
+          ),
+        ],
+      ),
+      body: SafeArea(
+        child: Center(
+          child: Padding(
+            padding: const EdgeInsets.all(16),
+            child: ConstrainedBox(
+              constraints: const BoxConstraints(maxWidth: 420),
+              child: ClipRRect(
+                borderRadius: BorderRadius.circular(28),
+                child: RepaintBoundary(
+                  key: _cardKey,
+                  child: _RideSummaryCard(
+                    ride: widget.ride,
+                    units: widget.units,
+                    unlockedAchievements: widget.unlockedAchievements,
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ),
+      ),
+      bottomNavigationBar: SafeArea(
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+          child: _PressEffect(
+            onTap: _onSave,
+            borderRadius: BorderRadius.circular(28),
+            boxShadow: [
+              BoxShadow(
+                color: const Color(0xFF86E96B).withValues(alpha: 0.4),
+                blurRadius: 18,
+                offset: const Offset(0, 8),
+              ),
+            ],
+            pressedShadow: [
+              BoxShadow(
+                color: const Color(0xFF86E96B).withValues(alpha: 0.25),
+                blurRadius: 10,
+                offset: const Offset(0, 4),
+              ),
+            ],
+            child: Container(
+              height: 54,
+              alignment: Alignment.center,
+              decoration: BoxDecoration(
+                borderRadius: BorderRadius.circular(28),
+                gradient: const LinearGradient(
+                  begin: Alignment.topLeft,
+                  end: Alignment.bottomRight,
+                  colors: [Color(0xFF86E96B), Color(0xFF2E7D32)],
+                ),
+              ),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  const Icon(Icons.ios_share, color: Colors.white),
+                  const SizedBox(width: 10),
+                  Text(
+                    Platform.isMacOS ? 'Save to Pictures' : 'Save image',
+                    style: const TextStyle(
+                      color: Colors.white,
+                      fontWeight: FontWeight.w800,
+                      fontSize: 15,
+                      letterSpacing: 0.8,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+      ),
     );
   }
 }
